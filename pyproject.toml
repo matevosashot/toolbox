@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toolbox"
+version = "0.1.0"
+description = "A collection of utility functions for machine and git info"
+requires-python = ">=3.8"
+
+[project.scripts]
+toolbox = "toolbox._cli:main"
+
+[tool.setuptools.packages.find]
+include = ["toolbox*"]
