@@ -1,0 +1,13 @@
+#!/bin/bash
+
+formatted_date=$(date +"%Y-%m-%d %H:%M:%S")
+
+message=$(echo  "*$(hostname)*  \`$formatted_date\` 🔵%0A$@")
+
+token=$TELEGRAM_BOT_TOKEN
+
+curl -X POST \
+  "https://api.telegram.org/bot$token/sendMessage" \
+  -d chat_id=-1001382816694 \
+  -d parse_mode="Markdown" \ 
+  -d text="$message"

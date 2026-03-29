@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Check if the first argument is a number (interval)
+if [[ "$1" =~ ^[0-9]+$ ]]; then
+    INTERVAL="$1"
+    shift  # Remove interval argument
+else
+    INTERVAL=60  # Default interval
+fi
+
+# After optional shift, the remaining arguments are servers
+if [[ $# -eq 0 ]]; then
+    echo "Usage: $0 [interval] <server1> <server2> [...]"
+    exit 1
+fi
+
+while true; do
+    for SERVER in "$@"; do
+        if ping -c 1 "$SERVER" > /dev/null 2>&1; then
+            echo "$(date): $SERVER is reachable."
+        else
+            echo "$(date): $SERVER is unreachable! Sending alert..."
+            telesend "server $SERVER is lost"
+			exit 1
+        fi
+    done
+    sleep "$INTERVAL"
+done
+
+
