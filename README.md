@@ -13,6 +13,7 @@ A lightweight Python utility package for machine and git introspection.
 - [CLI Scripts](#cli-scripts)
   - [`telesend`](#telesend)
   - [`pingservers`](#pingservers)
+  - [`teleserver`](#teleserver)
 - [Logging utilities](#logging-utilities)
   - [`setup_loggers()`](#setup_loggers)
   - [`report_errors()`](#report_errorsfunc--raise_errorfalse-logger)
@@ -149,6 +150,48 @@ pingservers 30 192.168.1.1 192.168.1.2
 # Use default 60-second interval
 pingservers my-server-1 my-server-2
 ```
+
+---
+
+### `teleserver`
+
+A Telegram remote shell. Polls a Telegram channel for messages that start with a configurable prefix (`$` by default), executes them as shell commands on the local machine, and sends the output back to the channel.
+
+```bash
+toolbox teleserver [--chat_id log] [--prefix '$'] [--poll_interval 1] [--timeout 30] [--log_path ~/logs/]
+```
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `--chat_id` | `log` | Channel to listen on. Named shortcuts: `log`, `train`. Or a raw numeric ID. |
+| `--token` | `$TELEGRAM_BOT_TOKEN` | Telegram bot token. |
+| `--prefix` | `$` | Message prefix that marks a command. Both `$cmd` and `$ cmd` are accepted. |
+| `--poll_interval` | `1.0` | Seconds between polling cycles. |
+| `--timeout` | `30` | Maximum seconds a shell command may run before being killed. |
+| `--log_path` | `~/logs/` | Directory (or `.log` file path) for log output. |
+
+**Usage — in the Telegram channel:**
+
+```
+$ ls -la
+$ df -h
+$ cat /etc/hostname
+```
+
+**Sensitive-command guard**
+
+Commands matching destructive patterns (`rm`, `dd`, `sudo`, `kill`, `shutdown`, `mv`, `chmod`, `chown`, etc.) are blocked on the first send. The bot replies asking you to send the exact same message again within 60 seconds to confirm:
+
+```
+You:  $ rm old_checkpoint.pt
+Bot:  ⚠ WARNING: sensitive command detected.
+      Send again to confirm (60s window):
+      $ rm old_checkpoint.pt
+
+You:  $ rm old_checkpoint.pt   ← confirmed, executes
+```
+
+Sending any other command before confirming cancels the pending operation silently.
 
 ---
 
