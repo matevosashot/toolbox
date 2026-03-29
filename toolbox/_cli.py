@@ -1,9 +1,17 @@
 import sys
 import toolbox
+from toolbox.teleserver import main as _teleserver_main
 
 
+# Simple function commands: called with positional args and --key=value kwargs.
 COMMANDS = {
     "git_info": toolbox.git_info,
+}
+
+# Subcommands that own their own argparse.  sys.argv[1] (the subcommand name)
+# is stripped before they are invoked so their parsers see a clean argv.
+SUBCOMMANDS = {
+    "teleserver": _teleserver_main,
 }
 
 
@@ -20,13 +28,21 @@ def _parse_args(raw):
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(f"Usage: toolbox <command> [args...] [--key=value ...]")
-        print(f"Commands: {', '.join(COMMANDS)}")
+    all_commands = {**COMMANDS, **SUBCOMMANDS}
+
+    if len(sys.argv) < 2 or sys.argv[1] not in all_commands:
+        print("Usage: toolbox <command> [args...]")
+        print(f"Commands: {', '.join(all_commands)}")
         sys.exit(1)
 
     command = sys.argv[1]
-    args, kwargs = _parse_args(sys.argv[2:])
-    result = COMMANDS[command](*args, **kwargs)
-    if result is not None:
-        print(result)
+
+    if command in SUBCOMMANDS:
+        # Remove the subcommand token so the subcommand's argparse sees sys.argv[1:]
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        SUBCOMMANDS[command]()
+    else:
+        args, kwargs = _parse_args(sys.argv[2:])
+        result = COMMANDS[command](*args, **kwargs)
+        if result is not None:
+            print(result)
