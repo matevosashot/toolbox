@@ -6,6 +6,7 @@ from toolbox.teleserver import main as _teleserver_main
 # Simple function commands: called with positional args and --key=value kwargs.
 COMMANDS = {
     "git_info": toolbox.git_info,
+    "local_ip": toolbox.get_local_ip
 }
 
 # Subcommands that own their own argparse.  sys.argv[1] (the subcommand name)

@@ -1,3 +1,8 @@
 #!/bin/bash
 
-telesend done
+output=$(telesend done 2>&1)
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "$output" >&2
+    exit $rc
+fi
