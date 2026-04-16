@@ -25,7 +25,7 @@ A lightweight Python utility package for machine and git introspection.
 ## Installation
 
 ```bash
-pip install git+https://github.com/matevosashot/toolbox@main
+pip install git+https://github.com/matevosashot/toolbox
 ```
 
 or (for development)
