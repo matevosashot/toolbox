@@ -26,7 +26,7 @@ def get_launch_info(string=True):
 
     
     launch_info_string = f"""
-python {launch_info["args"]}
+python {" ".join(sys.argv)}
 {launch_info["datetime"]}
 Env: {launch_info["interpreter"]}
 """
