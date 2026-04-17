@@ -15,7 +15,7 @@ dependencies = [
 toolbox = "toolbox._cli:main"
 
 [tool.setuptools]
-script-files = ["toolbox/pingservers", "toolbox/telesend", "toolbox/notify"]
+script-files = ["toolbox/pingservers", "toolbox/telesend", "toolbox/notify", "toolbox/activate"]
 
 [tool.setuptools.packages.find]
 include = ["toolbox*"]

@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Activate the pytohn environment
+# takes the environment name as an argument
+# activate env_name = source  $HOME/venvs/env_name/bin/activate
+
+# Activate the pytohn environment
+if [ -z "$1" ]; then
+    echo "Usage: source activate.sh <env_name>"
+    exit 1
+fi
+
+ENV_NAME="$1"
+ENV_PATH="$HOME/venvs/$ENV_NAME/bin/activate"
+
+# Activate the virtual environment
+if [ -f "$ENV_PATH" ]; then
+    source "$ENV_PATH"
+else
+    echo "Environment '$ENV_NAME' not found."
+    exit 1
+fi
+
