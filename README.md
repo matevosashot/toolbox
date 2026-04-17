@@ -14,6 +14,10 @@ A lightweight Python utility package for machine and git introspection.
   - [`telesend`](#telesend)
   - [`pingservers`](#pingservers)
   - [`teleserver`](#teleserver)
+- [Path utilities](#path-utilities)
+  - [`get_versions()`](#get_versionspath)
+  - [`path_versioned()`](#path_versionedpath-versionnext-before_extensionfalse)
+  - [`makedir_versioned()`](#makedir_versionedpath)
 - [Logging utilities](#logging-utilities)
   - [`setup_loggers()`](#setup_loggers)
   - [`report_errors()`](#report_errorsfunc--raise_errorfalse-logger)
@@ -192,6 +196,59 @@ You:  $ rm old_checkpoint.pt   ← confirmed, executes
 ```
 
 Sending any other command before confirming cancels the pending operation silently.
+
+---
+
+## Path utilities
+
+### `get_versions(path)`
+
+Returns all existing versioned paths for a given base path. Matches both naming styles: `name_vN.ext` and `name.ext_vN`.
+
+```python
+from toolbox.path import get_versions
+
+get_versions("./outputs/model.pt")
+# ['./outputs/model_v1.pt', './outputs/model_v2.pt']
+```
+
+---
+
+### `path_versioned(path, version="next", before_extension=False)`
+
+Returns a versioned variant of the given path.
+
+- `version="next"` — returns `path` unchanged if it does not exist; otherwise increments `_v1`, `_v2`, … until finding an unused path.
+- `version=<int>` — returns the explicitly versioned path without any existence check.
+- `before_extension=True` — inserts the version tag before the file extension (`name_vN.ext`); default is after (`name.ext_vN`).
+
+```python
+from toolbox.path import path_versioned
+
+# Auto-increment (file already exists)
+path_versioned("./outputs/model.pt")
+# './outputs/model.pt_v1'
+
+# Explicit version, tag before extension
+path_versioned("./outputs/model.pt", version=3, before_extension=True)
+# './outputs/model_v3.pt'
+```
+
+---
+
+### `makedir_versioned(path)`
+
+Creates and returns a versioned directory. If `path` does not exist it is created and returned as-is; otherwise the next unused versioned path is created and returned.
+
+```python
+from toolbox.path import makedir_versioned
+
+makedir_versioned("./runs/experiment")
+# './runs/experiment'        (created on first call)
+
+makedir_versioned("./runs/experiment")
+# './runs/experiment_v1'     (created on second call)
+```
 
 ---
 
