@@ -4,11 +4,12 @@ import socket
 import os
 import sys
 from datetime import datetime
+import re
 
 def get_hostname():
     return os.uname()[1]
 
-def get_launch_info(string=True):
+def get_launch_info(string=True, multiline_command=True):
     launch_info = {}
     launch_info["interpreter"] = sys.executable
     launch_info["datetime"] = datetime.now()
@@ -24,12 +25,18 @@ def get_launch_info(string=True):
     if not string:
         return launch_info
 
-    
+
+    command_string = f"python {' '.join(sys.argv)}"
+    if multiline_command:
+        command_string = re.sub(r"\s--(\w)", r" \\\n\t--\1", command_string)
+        command_string = re.sub(r"\s-(\w)", r" \\\n\t-\1", command_string)
+
     launch_info_string = f"""
-python {" ".join(sys.argv)}
+{command_string}
 {launch_info["datetime"]}
 Env: {launch_info["interpreter"]}
 """
+
     if launch_info["git_branch"] is not None:
         launch_info_string += f"Git branch: {launch_info['git_branch']}, {launch_info['git_commit']}\n"
     launch_info_string += f"Host: {launch_info['hostname']} {launch_info['local_ip']}"
