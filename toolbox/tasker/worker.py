@@ -25,8 +25,9 @@ On-disk layout
         completed/      # tasks finished with exit code 0
         failed/         # tasks finished with non-zero exit code
         logs/           # per-worker log files (<worker_name>.log)
+        stdout/         # stdout/stderr capture of every task (override
+                        #   with --stdout-dir / Worker(stdout_dir=...))
         archive/        # reserved for manual archival
-    ~/worker_stdout/    # stdout/stderr capture of every task
 
 File-name conventions
 ---------------------
@@ -337,6 +338,11 @@ class Worker:
             :meth:`loop` before resuming. Mirrors what the old
             ``worker.sh`` wrapper used to do at the process level.
         loop_tick: Minimum delay between polling iterations.
+        stdout_dir: Where to write per-task stdout/stderr capture files.
+            Defaults to ``<task_base_path>/stdout/`` so each task tree
+            keeps its outputs alongside ``completed/`` / ``failed/`` and
+            different projects don't clobber each other. Pass an
+            explicit path (``~`` is expanded) to override.
         logger: Logger to use. If ``None``, uses
             ``main.tasker.<worker_name>``. Following the standard-library
             convention, the worker class itself does not attach any
@@ -354,6 +360,7 @@ class Worker:
         failure_sleep: float = 2.0,
         restart_sleep: float = 5.0,
         loop_tick: float = 0.1,
+        stdout_dir: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.task_base_path = task_base_path
@@ -363,6 +370,14 @@ class Worker:
         self.failure_sleep = failure_sleep
         self.restart_sleep = restart_sleep
         self.loop_tick = loop_tick
+        # stdout_dir is the only directory not derived from
+        # task_base_path, so it's a plain attribute rather than a
+        # @property. Default keeps task artifacts colocated.
+        self.stdout_dir = (
+            os.path.expanduser(stdout_dir)
+            if stdout_dir is not None
+            else os.path.join(task_base_path, "stdout")
+        )
 
         self._init_dirs()
 
@@ -397,14 +412,6 @@ class Worker:
     @property
     def archive_dir(self) -> str:
         return os.path.join(self.task_base_path, "archive")
-
-    @property
-    def stdout_dir(self) -> str:
-        # Stored under the user's home so multiple workers writing to
-        # the same shared task directory don't fight over the same
-        # output path. Override by subclassing if you'd rather keep it
-        # alongside the tasks.
-        return os.path.expanduser("~/worker_stdout")
 
     def _init_dirs(self) -> None:
         for d in (
@@ -559,6 +566,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
              "mode before retrying (default: 5).",
     )
     parser.add_argument(
+        "--stdout-dir", type=str, default=None,
+        help="Directory for per-task stdout/stderr capture files. "
+             "Defaults to <task_base_path>/stdout/. '~' is expanded.",
+    )
+    parser.add_argument(
         "--telegram", action="store_true",
         help="Forward error-level log records to Telegram (requires "
              "TELEGRAM_BOT_TOKEN to be configured).",
@@ -595,6 +607,7 @@ def main() -> None:
         idle_sleep=args.idle_sleep,
         failure_sleep=args.failure_sleep,
         restart_sleep=args.restart_sleep,
+        stdout_dir=args.stdout_dir,
     )
 
     try:

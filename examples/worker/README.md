@@ -7,15 +7,19 @@ script and four pre-seeded tasks that exercise every scheduling feature.
 
 ```
 examples/worker/
-├── run_worker.sh          # launches `toolbox worker -p ./tasks --loop ...`
+├── run_worker.sh          # seeds tasks/pending/ from tasks/draft/, then runs the worker
 └── tasks/
-    ├── .gitignore         # ignores running/ completed/ failed/ logs/ archive/
-    └── pending/
+    ├── .gitignore         # ignores all runtime dirs (pending/ running/ completed/ ...)
+    └── draft/             # canonical task templates, checked into git
         ├── hello          # plain task
         ├── [3]heartbeat   # task array (runs 4× with $1 = 3,2,1,0)
         ├── !important     # priority task (claimed first)
         └── will_fail      # exits non-zero → routed to failed/
 ```
+
+`tasks/pending/` is a runtime directory. `run_worker.sh` re-creates it
+on every launch by copying `tasks/draft/*` into it, so the example is
+fully reproducible without any git hygiene after a run.
 
 ## Run it
 
@@ -43,19 +47,28 @@ Stop the worker with `Ctrl+C`.
 ls tasks/completed/         # successful runs (with timestamp suffixes)
 ls tasks/failed/            # failed runs (exit code in the name)
 cat tasks/logs/*.log        # per-worker log
-ls ~/worker_stdout/         # captured stdout/stderr per task
+ls tasks/stdout/            # captured stdout/stderr per task
 ```
 
 ## Re-run
 
-The launched worker drains `pending/`, so a second `./run_worker.sh`
-finds nothing to do. Either restore the demo files from git
-(`git checkout examples/worker/tasks/pending`) or copy any of the
-existing scripts back into `pending/`:
+`run_worker.sh` re-seeds `pending/` from `draft/` on every launch, so
+running it again Just Works:
 
 ```bash
-cp tasks/completed/hello__*  tasks/pending/hello
+./run_worker.sh
 ```
+
+To start completely from scratch (drop completed/, failed/, logs/),
+delete the runtime dirs first:
+
+```bash
+rm -rf tasks/{pending,running,completed,failed,logs,archive}
+./run_worker.sh
+```
+
+To add a new sample task to the demo, drop a new file into
+`tasks/draft/` — it will be picked up on the next launch.
 
 ## Pass-through arguments
 

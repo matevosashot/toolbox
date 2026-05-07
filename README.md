@@ -220,6 +220,7 @@ toolbox worker --task-base-path /shared/jobs --loop
 | `--idle-sleep`      | `10`                 | Seconds to sleep when the queue is empty. |
 | `--failure-sleep`   | `2`                  | Seconds to sleep after a failed task. |
 | `--restart-sleep`   | `5`                  | Seconds to sleep after an unhandled exception in `--loop` mode. |
+| `--stdout-dir`      | `<task_base_path>/stdout/` | Directory for per-task stdout/stderr capture files. |
 | `--telegram`        | off                  | Forward `ERROR`-level log records to Telegram. |
 
 For the file-name grammar (priority `!`, task arrays `[N]`,

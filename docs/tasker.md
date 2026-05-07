@@ -66,7 +66,8 @@ toolbox worker --loop          # --loop = poll forever
 ```
 
 The worker logs its progress to `<TASK_BASE_PATH>/logs/<hostname>.log`
-and writes per-task stdout/stderr to `~/worker_stdout/<task>.out`.
+and writes per-task stdout/stderr to `<TASK_BASE_PATH>/stdout/<task>.out`
+(override with `--stdout-dir`).
 
 ## On-disk layout
 
@@ -77,9 +78,9 @@ and writes per-task stdout/stderr to `~/worker_stdout/<task>.out`.
 ├── completed/      # tasks that exited 0
 ├── failed/         # tasks that exited non-zero
 ├── logs/           # per-worker .log files
+├── stdout/         # stdout/stderr capture of every task
+│                   #   (override location with --stdout-dir)
 └── archive/        # reserved for manual archival
-
-~/worker_stdout/    # stdout/stderr capture of every task
 ```
 
 When a worker claims a task it renames the file to encode who picked
@@ -177,7 +178,7 @@ equivalent).
 toolbox worker [--task-base-path PATH] [--worker-name NAME]
                [--loop] [--no-random]
                [--idle-sleep N] [--failure-sleep N] [--restart-sleep N]
-               [--telegram]
+               [--stdout-dir DIR] [--telegram]
 ```
 
 | Flag               | Default            | Description                                                                                                |
@@ -189,6 +190,7 @@ toolbox worker [--task-base-path PATH] [--worker-name NAME]
 | `--idle-sleep`     | `10`               | Seconds to sleep when the queue is empty.                                                                  |
 | `--failure-sleep`  | `2`                | Seconds to sleep after a failed task.                                                                      |
 | `--restart-sleep`  | `5`                | Seconds to sleep after an unhandled exception in `--loop` mode before retrying. See [crash recovery](#crash-recovery). |
+| `--stdout-dir`     | `<task_base_path>/stdout/` | Directory for per-task stdout/stderr capture files. `~` is expanded. |
 | `--telegram`       | off                | Forward `ERROR`-level log records to Telegram (requires `TELEGRAM_BOT_TOKEN`).                             |
 
 Equivalent invocations:
@@ -308,12 +310,13 @@ By default `toolbox worker`:
 - Skips Telegram unless `--telegram` is passed
 
 Per-task stdout and stderr are merged and tee'd to
-`~/worker_stdout/<running_task_name>.out`. The path is logged at
-`INFO` so it's easy to copy from a terminal:
+`<task_base_path>/stdout/<running_task_name>.out` by default
+(override with `--stdout-dir` or `Worker(stdout_dir=...)`). The path
+is logged at `INFO` so it's easy to copy from a terminal:
 
 ```
 INFO  Check output at
-/home/me/worker_stdout/train_v1__hostA__20260507-172000.out
+/shared/jobs/stdout/train_v1__hostA__20260507-172000.out
 ```
 
 The `pipefail` shell option is set before running the script so the
