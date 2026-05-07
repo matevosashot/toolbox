@@ -103,6 +103,7 @@ import logging
 import os
 import random as _random  # aliased to avoid clashing with the `randomize` arg
 import re
+import signal
 import subprocess
 import time
 import traceback
@@ -157,6 +158,10 @@ class Task:
         self.running_task: Optional[str] = None
         self.exit_code: Optional[int] = None
         self.stdout_path: Optional[str] = None
+        # Set to True if the worker kills the subprocess because the
+        # running/<file> entry was deleted out from under it. Tells
+        # Worker.run() to skip the rename to failed/ (the file is gone).
+        self.cancelled: bool = False
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                           #
@@ -240,10 +245,71 @@ class Task:
         ``set -o pipefail`` is critical: without it the exit code of a
         ``cmd | tee`` pipeline is always ``tee``'s (which is 0), so
         every failed task would be misclassified as a success.
+
+        While the subprocess runs, the worker watches *script_path* —
+        the entry under ``running/`` — and if it disappears (the user
+        ``rm``'d it to cancel the task), the whole process group is
+        killed. ``--watch-poll 0`` disables this and falls back to a
+        plain blocking wait.
         """
         cmd = self._build_shell_command(script_path, output_path)
-        result = subprocess.run(cmd, shell=True, executable="/bin/bash")
-        return result.returncode
+        poll = self.worker.watch_poll
+
+        # start_new_session=True puts bash and the entire pipeline
+        # (`cmd | tee`) into a new process group, so a single killpg
+        # reaps everything.
+        proc = subprocess.Popen(
+            cmd, shell=True, executable="/bin/bash",
+            start_new_session=True,
+        )
+
+        if poll <= 0:
+            proc.wait()
+            return proc.returncode
+
+        while True:
+            try:
+                proc.wait(timeout=poll)
+                return proc.returncode
+            except subprocess.TimeoutExpired:
+                pass
+            if not os.path.exists(script_path):
+                self.cancelled = True
+                self.worker.logger.warning(
+                    "Running file %s was deleted; killing task.",
+                    self.running_task,
+                )
+                self._terminate(proc)
+                return proc.returncode
+
+    def _terminate(self, proc: subprocess.Popen, grace: float = 5.0) -> None:
+        """SIGTERM the subprocess group, escalate to SIGKILL after *grace*.
+
+        Killing the group (rather than just ``proc.pid``) ensures the
+        whole ``bash`` pipeline — interpreter, the script, and ``tee``
+        — goes down together.
+        """
+        try:
+            pgid = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            return
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            self.worker.logger.warning(
+                "Task %s did not exit %.1fs after SIGTERM; sending SIGKILL.",
+                self.running_task, grace,
+            )
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        proc.wait()
 
     def _runner_command(self, script_path: str) -> str:
         """Return the shell snippet that invokes *script_path*.
@@ -386,6 +452,11 @@ class Worker:
             :meth:`loop` before resuming. Mirrors what the old
             ``worker.sh`` wrapper used to do at the process level.
         loop_tick: Minimum delay between polling iterations.
+        watch_poll: Seconds between checks for the running-file having
+            been deleted. When the entry under ``running/`` disappears,
+            the worker treats it as a manual cancellation and kills the
+            running subprocess group. ``0`` disables the watch and
+            falls back to a plain blocking ``wait()``.
         stdout_dir: Where to write per-task stdout/stderr capture files.
             Defaults to ``<task_base_path>/stdout/`` so each task tree
             keeps its outputs alongside ``completed/`` / ``failed/`` and
@@ -408,6 +479,7 @@ class Worker:
         failure_sleep: float = 2.0,
         restart_sleep: float = 5.0,
         loop_tick: float = 0.1,
+        watch_poll: float = 5.0,
         stdout_dir: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
@@ -418,6 +490,7 @@ class Worker:
         self.failure_sleep = failure_sleep
         self.restart_sleep = restart_sleep
         self.loop_tick = loop_tick
+        self.watch_poll = watch_poll
         # stdout_dir is the only directory not derived from
         # task_base_path, so it's a plain attribute rather than a
         # @property. Default keeps task artifacts colocated.
@@ -536,6 +609,19 @@ class Worker:
         self.logger.info("Acquired task %s. Processing...", task)
         exit_code = task.run()
 
+        if getattr(task, "cancelled", False):
+            # The running/<file> entry was removed mid-execution and the
+            # subprocess was killed. The file is gone, so don't try to
+            # rename it — just log and move on. The .out capture is
+            # left in place so the user can inspect partial output.
+            self.logger.warning(
+                "Task %s cancelled (running file removed). "
+                "Stdout left at\n%s",
+                task, task.stdout_path,
+            )
+            time.sleep(self.failure_sleep)
+            return
+
         if exit_code == 0:
             self.logger.info("Task %s completed successfully.", task)
             task.completed()
@@ -614,6 +700,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
              "mode before retrying (default: 5).",
     )
     parser.add_argument(
+        "--watch-poll", type=float, default=5.0,
+        help="Seconds between checks for the running-task file having "
+             "been deleted. If it disappears, the worker kills the "
+             "subprocess group. 0 disables (default: 5).",
+    )
+    parser.add_argument(
         "--stdout-dir", type=str, default=None,
         help="Directory for per-task stdout/stderr capture files. "
              "Defaults to <task_base_path>/stdout/. '~' is expanded.",
@@ -667,6 +759,7 @@ def main() -> None:
         idle_sleep=args.idle_sleep,
         failure_sleep=args.failure_sleep,
         restart_sleep=args.restart_sleep,
+        watch_poll=args.watch_poll,
         stdout_dir=args.stdout_dir,
     )
 

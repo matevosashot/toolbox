@@ -30,6 +30,7 @@ queue of "jobs to run".
 - [Concurrency model](#concurrency-model)
 - [Logging](#logging)
 - [Crash recovery](#crash-recovery)
+- [Cancelling a running task](#cancelling-a-running-task)
 - [FAQ / gotchas](#faq--gotchas)
 - [Worked example](#worked-example)
 
@@ -206,6 +207,7 @@ equivalent).
 toolbox worker [--task-base-path PATH] [--worker-name NAME]
                [--loop] [--no-random]
                [--idle-sleep N] [--failure-sleep N] [--restart-sleep N]
+               [--watch-poll N]
                [--stdout-dir DIR] [--log-path PATH] [--telegram]
 ```
 
@@ -218,6 +220,7 @@ toolbox worker [--task-base-path PATH] [--worker-name NAME]
 | `--idle-sleep`     | `10`               | Seconds to sleep when the queue is empty.                                                                  |
 | `--failure-sleep`  | `2`                | Seconds to sleep after a failed task.                                                                      |
 | `--restart-sleep`  | `5`                | Seconds to sleep after an unhandled exception in `--loop` mode before retrying. See [crash recovery](#crash-recovery). |
+| `--watch-poll`     | `5`                | Seconds between checks for the running task's file having been deleted. If it disappears, the worker kills the subprocess group. `0` disables. See [Cancelling a running task](#cancelling-a-running-task). |
 | `--stdout-dir`     | `<task_base_path>/stdout/` | Directory for per-task stdout/stderr capture files. `~` is expanded. |
 | `--log-path`       | `<task_base_path>/logs/<worker_name>.log` | Worker log file (or directory — auto-names `log@<ip>.log` inside it). `~` is expanded. |
 | `--telegram`       | off                | Forward `ERROR`-level log records to Telegram (requires `TELEGRAM_BOT_TOKEN`).                             |
@@ -328,6 +331,10 @@ The acquisition log line `"N pending tasks (M priority)"` is printed
 *before* claiming, so two workers will often disagree on `N` — that's
 fine and expected.
 
+The entry under `running/` is **live**: while a task is executing the
+worker stats it every `--watch-poll` seconds and kills the subprocess
+group if the file has been removed. See [Cancelling a running task](#cancelling-a-running-task).
+
 ## Logging
 
 By default `toolbox worker`:
@@ -398,16 +405,51 @@ stage's task file when it finishes successfully.
 **Q. How do I cancel a queued task?**
 
 Just `rm pending/<task>`. The worker will only see whatever is there
-at poll time. To cancel a running task, send a signal to the bash
-subprocess; the worker will route it to `failed/` based on the exit
-code.
+at poll time.
+
+**Q. How do I cancel a running task?**
+
+`rm running/<task>`. See [Cancelling a running task](#cancelling-a-running-task)
+below.
 
 **Q. How do I stop a long-running task array?**
 
 Either delete the next pending iteration (`rm pending/[N]name`), or
 freeze it in place by adding a `*` flag (`mv pending/[N]name
 'pending/*[N]name'`). The `*` variant lets the currently-queued
-iteration finish but skips the auto-respawn.
+iteration finish but skips the auto-respawn. To also abort the
+iteration that's executing right now, `rm running/[N]name` —
+**the next iteration in `pending/` is unaffected** (it was spawned at
+acquire time), so to stop the whole chain you need to remove or
+freeze the pending entry as well.
+
+## Cancelling a running task
+
+Deleting the file out of `running/` kills the task:
+
+```bash
+rm "$TASK_BASE_PATH/running/train_v1__hostA__20260507-172000"
+```
+
+Every `--watch-poll` seconds (default 5; `0` disables) the worker
+stats the file. When it disappears, it sends `SIGTERM` to the
+subprocess group; if the script is still alive 5 seconds later it
+sends `SIGKILL`. The captured `.out` file under `stdout/` is left in
+place so you can inspect partial output. The cancelled task is
+**not** moved to `failed/` — the file is already gone — only a
+`WARNING` is logged.
+
+Notes:
+
+- This works from any machine that can see the share; you don't need
+  to be on the worker's host or have access to its terminal.
+- Only the entry under `running/` is watched. Deleting from
+  `completed/`, `failed/`, or `stdout/` has no effect.
+- For a `TaskArray`, killing the running iteration does not stop the
+  next one — see the FAQ entry above.
+- The watchdog uses one process group per task (`start_new_session=True`
+  + `os.killpg`), so the whole `bash | tee` pipeline goes down as a
+  unit.
 
 ## Worked example
 
