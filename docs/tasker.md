@@ -86,17 +86,20 @@ and writes per-task stdout/stderr to `<TASK_BASE_PATH>/stdout/<task>.out`
 ```
 
 When a worker claims a task it renames the file to encode who picked
-it up and when. After completion an additional timestamp suffix
-(and the exit code on failure) is appended:
+it up and when. The most recent transition's timestamp is **prepended**,
+so every directory sorts chronologically with `ls`. The exit code is
+appended at the very end on failures, where it stays easy to spot:
 
 ```
 pending/    train_v1
-running/    train_v1__hostA__20260507-172000
-completed/  train_v1__hostA__20260507-172000__20260507-172403
-failed/     train_v1__hostA__20260507-172000__20260507-172403__7
+running/    20260507-172000__hostA__train_v1
+completed/  20260507-172403__20260507-172000__hostA__train_v1
+failed/     20260507-172403__20260507-172000__hostA__train_v1__7
 ```
 
-Sorting `ls completed/` is therefore a chronological history.
+Reading the completed/failed names left-to-right: completion time,
+acquire time, host, original task name (and exit code on failure).
+`ls completed/` is a chronological history of finished work.
 
 ## How tasks are executed
 
@@ -354,7 +357,7 @@ is logged at `INFO` so it's easy to copy from a terminal:
 
 ```
 INFO  Check output at
-/shared/jobs/stdout/train_v1__hostA__20260507-172000.out
+/shared/jobs/stdout/20260507-172000__hostA__train_v1.out
 ```
 
 The `pipefail` shell option is set before running the script so the
@@ -428,7 +431,7 @@ freeze the pending entry as well.
 Deleting the file out of `running/` kills the task:
 
 ```bash
-rm "$TASK_BASE_PATH/running/train_v1__hostA__20260507-172000"
+rm "$TASK_BASE_PATH/running/20260507-172000__hostA__train_v1"
 ```
 
 Every `--watch-poll` seconds (default 5; `0` disables) the worker

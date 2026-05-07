@@ -174,7 +174,9 @@ class Task:
         race (or the file disappeared for any other reason).
         """
         src = os.path.join(self.worker.pending_dir, self.pending_task)
-        dest_name = f"{self.pending_task}__{self.worker_name}__{_now()}"
+        # Acquire timestamp goes at the front so `ls running/` sorts
+        # chronologically across heterogeneous task names.
+        dest_name = f"{_now()}__{self.worker_name}__{self.pending_task}"
         dest = os.path.join(self.worker.running_dir, dest_name)
 
         try:
@@ -209,27 +211,29 @@ class Task:
 
     def completed(self) -> None:
         """Move the task into the ``completed/`` directory."""
-        self._move_to(self.worker.completed_dir, suffix=f"__{_now()}")
+        self._move_to(self.worker.completed_dir, prefix=f"{_now()}__")
 
     def failed(self) -> None:
         """Move the task into the ``failed/`` directory.
 
-        The exit code is appended to the file name to make triage easier.
+        The completion timestamp is prepended (so ``ls failed/`` sorts
+        chronologically); the exit code is appended for easy triage.
         """
         self._move_to(
             self.worker.failed_dir,
-            suffix=f"__{_now()}__{self.exit_code}",
+            prefix=f"{_now()}__",
+            suffix=f"__{self.exit_code}",
         )
 
     # ------------------------------------------------------------------ #
     # Internals                                                           #
     # ------------------------------------------------------------------ #
 
-    def _move_to(self, target_dir: str, suffix: str = "") -> None:
+    def _move_to(self, target_dir: str, prefix: str = "", suffix: str = "") -> None:
         if self.running_task is None:
             return
         src = os.path.join(self.worker.running_dir, self.running_task)
-        dest = os.path.join(target_dir, f"{self.running_task}{suffix}")
+        dest = os.path.join(target_dir, f"{prefix}{self.running_task}{suffix}")
         os.rename(src, dest)
 
     # Map file extension to the interpreter used to execute it. Takes
