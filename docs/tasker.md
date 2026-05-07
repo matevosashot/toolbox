@@ -178,7 +178,7 @@ equivalent).
 toolbox worker [--task-base-path PATH] [--worker-name NAME]
                [--loop] [--no-random]
                [--idle-sleep N] [--failure-sleep N] [--restart-sleep N]
-               [--stdout-dir DIR] [--telegram]
+               [--stdout-dir DIR] [--log-path PATH] [--telegram]
 ```
 
 | Flag               | Default            | Description                                                                                                |
@@ -191,6 +191,7 @@ toolbox worker [--task-base-path PATH] [--worker-name NAME]
 | `--failure-sleep`  | `2`                | Seconds to sleep after a failed task.                                                                      |
 | `--restart-sleep`  | `5`                | Seconds to sleep after an unhandled exception in `--loop` mode before retrying. See [crash recovery](#crash-recovery). |
 | `--stdout-dir`     | `<task_base_path>/stdout/` | Directory for per-task stdout/stderr capture files. `~` is expanded. |
+| `--log-path`       | `<task_base_path>/logs/<worker_name>.log` | Worker log file (or directory — auto-names `log@<ip>.log` inside it). `~` is expanded. |
 | `--telegram`       | off                | Forward `ERROR`-level log records to Telegram (requires `TELEGRAM_BOT_TOKEN`).                             |
 
 Equivalent invocations:
@@ -304,6 +305,8 @@ fine and expected.
 By default `toolbox worker`:
 
 - Writes a `.log` per worker to `<task_base_path>/logs/<worker_name>.log`
+  (override with `--log-path` — accepts either a `.log` file or a
+  directory)
 - Mirrors all records to stdout
 - Skips the `main.train` Telegram handler (this is a worker, not a
   training process)

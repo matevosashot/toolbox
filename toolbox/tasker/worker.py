@@ -571,6 +571,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
              "Defaults to <task_base_path>/stdout/. '~' is expanded.",
     )
     parser.add_argument(
+        "--log-path", type=str, default=None,
+        help="Worker log file path (or directory). Defaults to "
+             "<task_base_path>/logs/<worker_name>.log. If a directory "
+             "is given, setup_loggers auto-names the file. '~' is "
+             "expanded.",
+    )
+    parser.add_argument(
         "--telegram", action="store_true",
         help="Forward error-level log records to Telegram (requires "
              "TELEGRAM_BOT_TOKEN to be configured).",
@@ -589,10 +596,15 @@ def main() -> None:
         )
 
     # Configure logging at the application boundary, not inside Worker.
-    # We point setup_loggers at the per-worker .log file so the existing
-    # on-disk layout (<task_base_path>/logs/<worker_name>.log) is preserved.
+    # Default log file lives at <task_base_path>/logs/<worker_name>.log;
+    # --log-path overrides that and may be either a .log file or a
+    # directory (setup_loggers handles both cases).
     worker_name = args.worker_name or _hostname()
-    log_path = os.path.join(args.task_base_path, "logs", f"{worker_name}.log")
+    log_path = (
+        os.path.expanduser(args.log_path)
+        if args.log_path is not None
+        else os.path.join(args.task_base_path, "logs", f"{worker_name}.log")
+    )
     setup_loggers(
         base_path=log_path,
         telegram=args.telegram,
