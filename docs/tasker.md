@@ -16,6 +16,7 @@ queue of "jobs to run".
 - [When to use it](#when-to-use-it)
 - [Quick start](#quick-start)
 - [On-disk layout](#on-disk-layout)
+- [How tasks are executed](#how-tasks-are-executed)
 - [File-name grammar](#file-name-grammar)
   - [Priority tasks (`!`)](#priority-tasks-)
   - [Task arrays (`[N]`)](#task-arrays-n)
@@ -95,6 +96,33 @@ failed/     train_v1__hostA__20260507-172000__20260507-172403__7
 ```
 
 Sorting `ls completed/` is therefore a chronological history.
+
+## How tasks are executed
+
+The interpreter used for a task file is chosen by, in order:
+
+1. **Extension** — `.py` files are run with `python3`. The shebang and
+   executable bit are ignored. (Add more languages by extending
+   `Task._EXTENSION_INTERPRETERS`.)
+2. **Executable bit** — if the file has `+x`, it's exec'd directly so
+   its shebang chooses the interpreter. Lets you write tasks in any
+   language (Ruby, Node, Perl, …) without extra config.
+3. **Default** — anything else is fed to `bash`. Convenient for
+   dropping plain shell snippets into `pending/` without `chmod +x`.
+
+In all cases combined stdout/stderr is captured to the configured
+`stdout_dir` via `tee`, and `set -o pipefail` is set so a script's
+non-zero exit is preserved through the pipeline.
+
+| File                          | Runs as                  |
+| ----------------------------- | ------------------------ |
+| `train.py`                    | `python3 train.py`       |
+| `make_dataset` (with `+x`, shebang `#!/usr/bin/env python3`) | exec → `python3` |
+| `make_dataset` (with `+x`, shebang `#!/usr/bin/env ruby`)    | exec → `ruby`    |
+| `cleanup` (no `+x`, no shebang) | `bash cleanup`         |
+
+For task arrays (`[N]name`), the current `N` is appended as `$1`
+regardless of which interpreter is chosen.
 
 ## File-name grammar
 

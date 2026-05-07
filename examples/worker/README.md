@@ -11,11 +11,18 @@ examples/worker/
 └── tasks/
     ├── .gitignore         # ignores all runtime dirs (pending/ running/ completed/ ...)
     └── draft/             # canonical task templates, checked into git
-        ├── hello          # plain task
-        ├── [3]heartbeat   # task array (runs 4× with $1 = 3,2,1,0)
-        ├── !important     # priority task (claimed first)
-        └── will_fail      # exits non-zero → routed to failed/
+        ├── hello              # plain bash task
+        ├── [3]heartbeat       # task array (runs 4× with $1 = 3,2,1,0)
+        ├── !important         # priority task (claimed first)
+        ├── will_fail          # exits non-zero → routed to failed/
+        ├── iampython          # python via shebang (chmod +x, no extension)
+        └── imustbepython.py   # python via .py extension (no chmod needed)
 ```
+
+The last two demonstrate non-bash interpreters. The worker picks the
+interpreter using, in order: `.py` extension → executable bit + shebang
+→ bash. See [`docs/tasker.md` § How tasks are executed](../../docs/tasker.md#how-tasks-are-executed)
+for the full table.
 
 `tasks/pending/` is a runtime directory. `run_worker.sh` re-creates it
 on every launch by copying `tasks/draft/*` into it, so the example is

@@ -29,6 +29,21 @@ On-disk layout
                         #   with --stdout-dir / Worker(stdout_dir=...))
         archive/        # reserved for manual archival
 
+How tasks are executed
+----------------------
+The interpreter used for a task file is chosen by:
+
+1. **Extension** – ``.py`` files are run with ``python3``. (Add more
+   languages by extending :attr:`Task._EXTENSION_INTERPRETERS`.)
+2. **Executable bit** – if the file has ``+x``, it's exec'd directly,
+   so its shebang line chooses the interpreter.
+3. **Default** – any other file is fed to ``bash``. This lets you drop
+   plain shell snippets without ``chmod +x``.
+
+In all cases, combined stdout/stderr is captured to the configured
+``stdout_dir`` via ``tee``, and ``set -o pipefail`` is set so the task
+exit code reflects the script (not ``tee``).
+
 File-name conventions
 ---------------------
 The base file name is the script name. Optional prefixes/suffixes change
@@ -212,22 +227,58 @@ class Task:
         dest = os.path.join(target_dir, f"{self.running_task}{suffix}")
         os.rename(src, dest)
 
+    # Map file extension to the interpreter used to execute it. Takes
+    # precedence over the executable bit and any shebang. Override on
+    # subclasses to add languages.
+    _EXTENSION_INTERPRETERS = {
+        ".py": "python3",
+    }
+
     def _run_script(self, script_path: str, output_path: str) -> int:
-        """Run *script_path* with bash, tee-ing output to *output_path*.
+        """Run *script_path*, tee-ing combined stdout/stderr to *output_path*.
 
         ``set -o pipefail`` is critical: without it the exit code of a
-        ``bash | tee`` pipeline is always ``tee``'s (which is 0), so
+        ``cmd | tee`` pipeline is always ``tee``'s (which is 0), so
         every failed task would be misclassified as a success.
         """
         cmd = self._build_shell_command(script_path, output_path)
         result = subprocess.run(cmd, shell=True, executable="/bin/bash")
         return result.returncode
 
+    def _runner_command(self, script_path: str) -> str:
+        """Return the shell snippet that invokes *script_path*.
+
+        Resolution order:
+
+        1. If the original task name has an extension registered in
+           :attr:`_EXTENSION_INTERPRETERS` (e.g. ``.py``) → use that
+           interpreter, regardless of the executable bit or shebang.
+        2. Else if the file is executable → exec it directly so its
+           shebang chooses the interpreter.
+        3. Else → run with ``bash`` (lets users drop plain shell
+           snippets into ``pending/`` without having to ``chmod +x``).
+        """
+        ext = os.path.splitext(self.pending_task)[1].lower()
+        interpreter = self._EXTENSION_INTERPRETERS.get(ext)
+        if interpreter is not None:
+            return f'{interpreter} "{script_path}"'
+        if os.access(script_path, os.X_OK):
+            return f'"{script_path}"'
+        return f'bash "{script_path}"'
+
+    def _script_args(self) -> List[str]:
+        """Extra positional args appended after the script path.
+
+        Default: none. Override in subclasses (see :class:`TaskArray`,
+        which appends ``num`` as ``$1``).
+        """
+        return []
+
     def _build_shell_command(self, script_path: str, output_path: str) -> str:
-        # Base implementation: just `bash script | tee output`.
-        return (
-            f'set -o pipefail; bash "{script_path}" 2>&1 | tee "{output_path}"'
-        )
+        cmd = self._runner_command(script_path)
+        for arg in self._script_args():
+            cmd += f' "{arg}"'
+        return f'set -o pipefail; {cmd} 2>&1 | tee "{output_path}"'
 
     # ------------------------------------------------------------------ #
     # Classification                                                      #
@@ -294,12 +345,9 @@ class TaskArray(Task):
         # `running/` and must stay there for execution.
         subprocess.run(["cp", src, dest], check=False)
 
-    def _build_shell_command(self, script_path: str, output_path: str) -> str:
-        # Same as base class but pass `num` as $1 to the script.
-        return (
-            f'set -o pipefail; bash "{script_path}" "{self.num}" 2>&1 '
-            f'| tee "{output_path}"'
-        )
+    def _script_args(self) -> List[str]:
+        # Pass the current iteration count as $1 to the script.
+        return [str(self.num)]
 
     # ------------------------------------------------------------------ #
 
