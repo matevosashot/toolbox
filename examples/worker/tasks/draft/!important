@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Priority task: the leading '!' makes workers prefer this file over
+# any non-priority pending task.
+echo "I am urgent and was picked first."
+sleep 1

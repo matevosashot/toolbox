@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Demonstrates the failure path: a non-zero exit code routes the task
+# into failed/ instead of completed/, and the exit code is appended to
+# the file name for easy triage.
+echo "About to fail with exit code 7."
+exit 7

@@ -14,6 +14,7 @@ A lightweight Python utility package for machine and git introspection.
   - [`telesend`](#telesend)
   - [`pingservers`](#pingservers)
   - [`teleserver`](#teleserver)
+  - [`toolbox worker`](#toolbox-worker) — file-system task queue ([full docs](docs/tasker.md))
 - [Path utilities](#path-utilities)
   - [`get_versions()`](#get_versionspath)
   - [`path_versioned()`](#path_versionedpath-versionnext-before_extensionfalse)
@@ -196,6 +197,38 @@ You:  $ rm old_checkpoint.pt   ← confirmed, executes
 ```
 
 Sending any other command before confirming cancels the pending operation silently.
+
+---
+
+### `toolbox worker`
+
+Runs a [tasker](docs/tasker.md) worker — a file-system based task queue
+where each task is a bash script in a shared `pending/` directory.
+Workers race to claim scripts via atomic `os.rename`, run them, and
+move them into `completed/` or `failed/` based on the exit code.
+
+```bash
+toolbox worker --task-base-path /shared/jobs --loop
+```
+
+| Argument            | Default              | Description |
+| ------------------- | -------------------- | --- |
+| `--task-base-path`, `-p` | `$TASK_BASE_PATH` | Root directory containing `pending/`, `running/`, … |
+| `--worker-name`, `-n` | hostname           | Identifier embedded into running/completed file names. |
+| `--loop`            | off                  | Poll forever instead of processing a single task and exiting. |
+| `--no-random`       | off                  | Pick the first listed pending task instead of a random one. |
+| `--idle-sleep`      | `10`                 | Seconds to sleep when the queue is empty. |
+| `--failure-sleep`   | `2`                  | Seconds to sleep after a failed task. |
+| `--restart-sleep`   | `5`                  | Seconds to sleep after an unhandled exception in `--loop` mode. |
+| `--telegram`        | off                  | Forward `ERROR`-level log records to Telegram. |
+
+For the file-name grammar (priority `!`, task arrays `[N]`,
+non-propagating `*`), the on-disk layout, the programmatic API, and
+the concurrency model, see the dedicated reference:
+
+→ **[docs/tasker.md](docs/tasker.md)**
+
+A runnable demo is in [`examples/worker/`](examples/worker/README.md).
 
 ---
 

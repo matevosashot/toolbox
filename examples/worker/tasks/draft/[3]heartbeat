@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Task array: the [N] prefix in the file name causes the worker to
+# re-spawn this script with N decremented after each run, so it
+# executes a total of N+1 times (here: N = 3, 2, 1, 0). The current
+# value of N is passed as $1.
+N="${1:-?}"
+echo "heartbeat — N=$N"
+sleep 1

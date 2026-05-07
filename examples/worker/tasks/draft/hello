@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# A plain task: runs once, then is moved to completed/.
+echo "Hello from the worker!"
+sleep 1

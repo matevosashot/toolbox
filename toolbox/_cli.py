@@ -1,6 +1,7 @@
 import sys
 import toolbox
 from toolbox.teleserver import main as _teleserver_main
+from toolbox.tasker.worker import main as _worker_main
 
 
 # Simple function commands: called with positional args and --key=value kwargs.
@@ -13,6 +14,7 @@ COMMANDS = {
 # is stripped before they are invoked so their parsers see a clean argv.
 SUBCOMMANDS = {
     "teleserver": _teleserver_main,
+    "worker": _worker_main,
 }
 
 
