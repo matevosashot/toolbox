@@ -12,6 +12,7 @@ A lightweight Python utility package for machine and git introspection.
   - [`get_local_ip()`](#get_local_ip)
 - [CLI Scripts](#cli-scripts)
   - [`telesend`](#telesend)
+  - [`telesend-data`](#telesend-data)
   - [`pingservers`](#pingservers)
   - [`teleserver`](#teleserver)
   - [`toolbox worker`](#toolbox-worker) — file-system task queue ([full docs](docs/tasker.md))
@@ -131,6 +132,45 @@ Output in Telegram:
 ```
 *my-machine*  `2026-03-29 14:00:00` 🔵
 deployment finished on node-3
+```
+
+---
+
+### `telesend-data`
+
+Sends a file (image, video, audio, or any document) to the same Telegram log channel as `telesend`. The endpoint is picked automatically from the file's MIME type:
+
+| Extension / MIME | Endpoint | Compression |
+| --- | --- | --- |
+| `image/*` (jpg, png, …) | `sendPhoto` | Re-encoded by Telegram |
+| `video/*` (mp4, …) | `sendVideo` | Re-encoded by Telegram |
+| `audio/*` (mp3, wav, …) | `sendAudio` | Kept if compatible |
+| anything else | `sendDocument` | None — byte-perfect |
+
+Pass `--asfile` to force `sendDocument` for any input — useful for sending images or videos without Telegram's lossy re-encoding.
+
+```bash
+telesend-data <file> [caption...] [--asfile] [--no-header]
+```
+
+| Argument      | Description                                                            |
+| ------------- | ---------------------------------------------------------------------- |
+| `file`        | Path to the file to send.                                              |
+| `caption`     | Optional caption text (everything after the file path).                |
+| `--asfile`    | Send as document, no compression, no data loss.                        |
+| `--no-header` | Omit the `*hostname* *ip*` / timestamp header from the caption.        |
+
+Requires the `TELEGRAM_BOT_TOKEN` environment variable to be set.
+
+```bash
+# Compressed photo with auto header + caption
+telesend-data screenshot.png "loss curve at epoch 42"
+
+# Lossless original PNG, no header
+telesend-data screenshot.png --asfile --no-header
+
+# Video — auto-detected
+telesend-data demo.mp4 "build worked"
 ```
 
 ---

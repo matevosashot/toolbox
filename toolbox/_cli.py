@@ -2,6 +2,7 @@ import sys
 import toolbox
 from toolbox.teleserver import main as _teleserver_main
 from toolbox.tasker.worker import main as _worker_main
+from toolbox.telesend_data import main as _telesend_data_main
 
 
 # Simple function commands: called with positional args and --key=value kwargs.
@@ -15,6 +16,7 @@ COMMANDS = {
 SUBCOMMANDS = {
     "teleserver": _teleserver_main,
     "worker": _worker_main,
+    "telesend-data": _telesend_data_main,
 }
 
 
