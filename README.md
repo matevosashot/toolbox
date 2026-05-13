@@ -138,7 +138,7 @@ deployment finished on node-3
 
 ### `telesend-data`
 
-Sends a file (image, video, audio, or any document) to the same Telegram log channel as `telesend`. The endpoint is picked automatically from the file's MIME type:
+Sends a file (image, video, audio, or any document) to a Telegram chat. The endpoint is picked automatically from the file's MIME type:
 
 | Extension / MIME | Endpoint | Compression |
 | --- | --- | --- |
@@ -150,27 +150,31 @@ Sends a file (image, video, audio, or any document) to the same Telegram log cha
 Pass `--asfile` to force `sendDocument` for any input — useful for sending images or videos without Telegram's lossy re-encoding.
 
 ```bash
-telesend-data <file> [caption...] [--asfile] [--no-header]
+telesend-data <file> [caption...] [--asfile] [--no-header] [--chat_id=<id>]
 ```
 
-| Argument      | Description                                                            |
-| ------------- | ---------------------------------------------------------------------- |
-| `file`        | Path to the file to send.                                              |
-| `caption`     | Optional caption text (everything after the file path).                |
-| `--asfile`    | Send as document, no compression, no data loss.                        |
-| `--no-header` | Omit the `*hostname* *ip*` / timestamp header from the caption.        |
+| Argument         | Description                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| `file`           | Path to the file to send.                                                                      |
+| `caption`        | Optional caption text (everything after the file path).                                        |
+| `--asfile`       | Send as document, no compression, no data loss.                                                |
+| `--no-header`    | Omit the `*hostname* *ip*` / timestamp header from the caption.                                |
+| `--chat_id=<id>` | Destination chat. Named shortcut (`default`, `log`, `train`, `claude`) or a raw numeric id. Default: `default`. |
 
 Requires the `TELEGRAM_BOT_TOKEN` environment variable to be set.
 
 ```bash
-# Compressed photo with auto header + caption
+# Compressed photo with auto header + caption (goes to 'default')
 telesend-data screenshot.png "loss curve at epoch 42"
 
 # Lossless original PNG, no header
 telesend-data screenshot.png --asfile --no-header
 
-# Video — auto-detected
-telesend-data demo.mp4 "build worked"
+# Video — auto-detected, sent to the 'claude' chat
+telesend-data demo.mp4 "build worked" --chat_id=claude
+
+# Raw numeric chat id
+telesend-data report.pdf --chat_id=-1001234567890
 ```
 
 ---
