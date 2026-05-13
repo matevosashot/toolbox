@@ -36,6 +36,9 @@ def setup_loggers(
         The configured ``main`` :class:`logging.Logger`.
     """
     logger = logging.getLogger("main")
+    for handler in logger.handlers:
+        logger.removeHandler(handler)
+
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
 
@@ -52,7 +55,9 @@ def setup_loggers(
         )
 
     if train_logger:
-        train_log = logging.getLogger("main.train")
+        train_log = logging.getLogger("train")
+        for handler in train_log.handlers:
+            train_log.removeHandler(handler)
         train_log.setLevel(logging.INFO)
         train_log.addHandler(
             get_telegram_handler(chat_id="train", level=logging.INFO, disable_notification=True, emoji=True)

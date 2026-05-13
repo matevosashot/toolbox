@@ -8,8 +8,9 @@ def function_that_raises_error():
 if __name__ == "__main__":
     print("Setting up loggers")
     logger = setup_loggers(base_path="./logs", debug=True, telegram=True, train_logger=True, stdout=True)
+    # logger = setup_loggers(base_path="./logs", debug=True, telegram=False, train_logger=False, stdout=False)
     
-    train_logger = logging.getLogger("main.train")
+    train_logger = logging.getLogger("train")
 
     try:
         function_that_raises_error()
