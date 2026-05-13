@@ -59,6 +59,10 @@ def setup_loggers(
         )
 
     if stdout:
-        logger.addHandler(logging.StreamHandler())
+        stdout_handler = logging.StreamHandler()
+        stdout_handler.setLevel(logging.INFO)
+        if debug:
+            stdout_handler.setLevel(logging.DEBUG)
+        logger.addHandler(stdout_handler)
 
     return logger
