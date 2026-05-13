@@ -34,3 +34,6 @@ pip-delete-this-directory.txt
 # OS
 .DS_Store
 Thumbs.db
+examples/worker/tasks/stdout/*
+logs/*
+draft/*
