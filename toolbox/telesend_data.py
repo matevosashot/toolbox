@@ -11,6 +11,7 @@ from toolbox.configs.telegram import CHANNEL_IDS, TELEGRAM_BOT_TOKEN
 from toolbox.machine import get_hostname, get_local_ip
 
 CAPTION_LIMIT = 1024
+TEXT_LIMIT = 4096
 
 ENDPOINTS = {
     "photo": ("sendPhoto", "photo"),
@@ -37,7 +38,7 @@ def _md_escape(text: str) -> str:
     return text
 
 
-def _build_caption(user_caption: str, no_header: bool) -> str:
+def _build_caption(user_caption: str, no_header: bool, limit: int = CAPTION_LIMIT) -> str:
     safe_caption = _md_escape(user_caption)
     if no_header:
         caption = safe_caption
@@ -45,14 +46,16 @@ def _build_caption(user_caption: str, no_header: bool) -> str:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         header = f"*{get_hostname()}* *{get_local_ip()}* 🔵\n`{ts}`"
         caption = f"{header}\n{safe_caption}" if safe_caption else header
-    if len(caption) > CAPTION_LIMIT:
-        caption = caption[: CAPTION_LIMIT - 1] + "…"
+    if len(caption) > limit:
+        caption = caption[: limit - 1] + "…"
     return caption
 
 
 USAGE = (
-    "Usage: telesend-data <file> [caption...] [--asfile] [--no-header] [--chat_id=<id>]\n"
-    "Send an image / video / audio / file to a Telegram chat.\n"
+    "Usage: telesend-data <file|text> [caption...] [--asfile] [--no-header] [--chat_id=<id>]\n"
+    "Send an image / video / audio / file or a plain text message to a Telegram chat.\n"
+    "  If the first positional arg is not an existing file (or is empty),\n"
+    "  the positional args are joined and sent as a text message.\n"
     "  --asfile         send as document (no compression, no data loss)\n"
     "  --no-header      omit the hostname/timestamp caption header\n"
     f"  --chat_id=<id>   named shortcut ({', '.join(CHANNEL_IDS)}) or raw numeric id\n"
@@ -104,21 +107,31 @@ def main() -> None:
         print("TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
 
-    path = Path(file_arg)
-    if not path.is_file():
-        print(f"File not found: {path}", file=sys.stderr)
-        sys.exit(1)
-
-    kind = _pick_kind(path, asfile)
-    method, field = ENDPOINTS[kind]
-    caption = _build_caption(caption_arg, no_header)
     resolved_chat = _resolve_chat_id(chat_id)
+    is_file = bool(file_arg) and Path(file_arg).is_file()
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
-    data = {"chat_id": resolved_chat, "caption": caption, "parse_mode": "Markdown"}
-    with path.open("rb") as fh:
-        files = {field: (path.name, fh)}
-        resp = requests.post(url, data=data, files=files, timeout=120)
+    if is_file:
+        path = Path(file_arg)
+        kind = _pick_kind(path, asfile)
+        method, field = ENDPOINTS[kind]
+        caption = _build_caption(caption_arg, no_header)
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+        data = {"chat_id": resolved_chat, "caption": caption, "parse_mode": "Markdown"}
+        with path.open("rb") as fh:
+            files = {field: (path.name, fh)}
+            resp = requests.post(url, data=data, files=files, timeout=120)
+        sent_descr = f"{method} ({path.name})"
+    else:
+        text_body = " ".join(t for t in (file_arg, caption_arg) if t)
+        if not text_body:
+            print(USAGE, file=sys.stderr)
+            sys.exit(2)
+        text = _build_caption(text_body, no_header, TEXT_LIMIT)
+        method = "sendMessage"
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+        data = {"chat_id": resolved_chat, "text": text, "parse_mode": "Markdown"}
+        resp = requests.post(url, data=data, timeout=60)
+        sent_descr = f"{method} (text)"
 
     try:
         body = resp.json()
@@ -130,7 +143,7 @@ def main() -> None:
         print(f"Telegram error: {body}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"sent via {method} ({path.name})")
+    print(f"sent via {sent_descr}")
 
 
 if __name__ == "__main__":

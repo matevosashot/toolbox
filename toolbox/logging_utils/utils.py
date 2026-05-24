@@ -74,7 +74,9 @@ def get_file_handler(
         path = LOG_BASE_PATH
 
     if path.endswith(".log"):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
     else:
         local_ip = get_local_ip().replace("192.168.", "")
         file = f"log@{local_ip}.log"
