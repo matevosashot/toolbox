@@ -63,7 +63,7 @@ def get_telegram_handler(
 
     local_ip = get_local_ip().replace("192.168", "")
     if emoji:
-        random_emoji = random.choice(list(vars(EMOJI).values()))
+        random_emoji = random.choice(list(EMOJI))
         fmt = f'{random_emoji} *%(levelname)s* `{local_ip}`\n%(message)s'
     else:
         fmt = f'`%(asctime)s` *%(levelname)s* `{local_ip}`\n[%(name)s:%(funcName)s]\n%(message)s'

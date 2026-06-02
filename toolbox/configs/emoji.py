@@ -1,7 +1,14 @@
+from enum import Enum
 
 
-class EMOJI:
-    """Unicode emoji constants for use in Telegram log message formatting."""
+class EMOJI(str, Enum):
+    """Unicode emoji constants for use in Telegram log message formatting.
+
+    Each member is a ``str`` subclass, so it interpolates as the glyph in
+    f-strings and concatenates with other strings transparently. Iterating
+    the class (``list(EMOJI)``) yields only the declared members, which makes
+    it safe to use with ``random.choice`` and similar helpers.
+    """
 
     # Circles
     WHITE_CIRCLE = '\U000026AA'
@@ -44,3 +51,8 @@ class EMOJI:
     THUMBS_UP = '\U0001F44D'
     SKULL = '\U0001F480'
     ROCKET = '\U0001F680'
+
+    def __str__(self) -> str:
+        # Without this, ``str(EMOJI.BLUE_CIRCLE)`` returns ``"EMOJI.BLUE_CIRCLE"``
+        # on Python < 3.11, which would re-introduce a broken prefix in logs.
+        return self.value
