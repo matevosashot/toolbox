@@ -726,12 +726,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Forward error-level log records to Telegram (requires "
              "TELEGRAM_BOT_TOKEN to be configured).",
     )
+    parser.add_argument(
+        "--print-manual", action="store_true",
+        help="Print the manual for the tasker worker.",
+    )
     return parser
 
 
 def main() -> None:
     parser = _build_arg_parser()
     args = parser.parse_args()
+
+    if args.print_manual:
+        print(__doc__)
+        return
 
     if args.task_base_path is None:
         parser.error(
