@@ -20,6 +20,9 @@ A lightweight Python utility package for machine and git introspection.
   - [`get_versions()`](#get_versionspath)
   - [`path_versioned()`](#path_versionedpath-versionnext-before_extensionfalse)
   - [`makedir_versioned()`](#makedir_versionedpath)
+- [sys.path utilities](#syspath-utilities)
+  - [`update()`](#updatedepth1-ancestor_namenone)
+  - [`find_in_path()`](#find_in_pathpath)
 - [Logging utilities](#logging-utilities)
   - [`setup_loggers()`](#setup_loggers)
   - [`report_errors()`](#report_errorsfunc--raise_errorfalse-logger)
@@ -327,6 +330,65 @@ makedir_versioned("./runs/experiment")
 
 makedir_versioned("./runs/experiment")
 # './runs/experiment_v1'     (created on second call)
+```
+
+---
+
+## sys.path utilities
+
+Helpers for manipulating and searching the Python import path. The module mirrors stdlib `sys.path` semantics and is accessed as `toolbox.sys.path.<verb>`.
+
+### `update(depth=1, ancestor_name=None)`
+
+Inserts an ancestor directory of the *caller's* file at the front of `sys.path`. Useful for bootstrapping imports in scripts that aren't launched from the project root.
+
+The caller's file is located via stack introspection (`sys._getframe` with an `inspect.stack` fallback), so the function takes no path argument — it always operates relative to whoever called it.
+
+- `depth=N` — ascend `N` directory levels above the caller's file. `depth=0` adds the directory directly containing the caller; `depth=1` (the default) adds its parent.
+- `ancestor_name="my_project"` — ascend until a directory with that basename is reached. Raises `ValueError` if none is found before the filesystem root. When given, `depth` is ignored.
+
+Returns the directory that was inserted.
+
+```python
+import toolbox.sys.path
+
+# Project layout:
+#   /repos/my_project/
+#       my_project/             <- importable package
+#       scripts/sub/
+#           train.py            <- this file calling update()
+
+toolbox.sys.path.update(depth=2)
+# '/repos/my_project'
+# sys.path[0] is now '/repos/my_project', so `import my_project` works.
+
+toolbox.sys.path.update(ancestor_name="my_project")
+# Same result, but robust to scripts being moved deeper in the tree.
+```
+
+---
+
+### `find_in_path(path)`
+
+Locates a file or directory either at the given path or under any `sys.path` entry, and returns its absolute path.
+
+Resolution order:
+
+1. If `path` exists as given (absolute, or relative to the current working directory), its absolute form is returned.
+2. If `path` is absolute and does not exist, `ValueError` is raised — an absolute path cannot be meaningfully resolved against `sys.path`.
+3. Otherwise each entry of `sys.path` is joined with `path` in order and the first existing result is returned as an absolute path.
+
+```python
+from toolbox.sys.path import find_in_path
+
+find_in_path("configs/default.yaml")
+# '/repos/my_project/configs/default.yaml'
+
+find_in_path("/etc/hosts")
+# '/etc/hosts'                  (existing absolute path returned as-is)
+
+find_in_path("nope.txt")
+# FileNotFoundError: Path 'nope.txt' not found in sys.path
 ```
 
 ---
