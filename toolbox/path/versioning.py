@@ -101,5 +101,3 @@ def makedir_versioned(path: str) -> str:
     new_path = path_versioned(path, version="next")
     os.makedirs(new_path)
     return new_path
-
-    
