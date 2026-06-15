@@ -6,28 +6,28 @@ A lightweight Python utility package for machine and git introspection.
 
 - [Installation](#installation)
 - [Functions](#functions)
-  - [`git_info()`](#git_infodirectory-none)
-  - [`get_launch_info()`](#get_launch_infostring-true)
-  - [`get_hostname()`](#get_hostname)
-  - [`get_local_ip()`](#get_local_ip)
+  - `[git_info()](#git_infodirectory-none)`
+  - `[get_launch_info()](#get_launch_infostring-true)`
+  - `[get_hostname()](#get_hostname)`
+  - `[get_local_ip()](#get_local_ip)`
 - [CLI Scripts](#cli-scripts)
-  - [`telesend`](#telesend)
-  - [`telesend-data`](#telesend-data)
-  - [`pingservers`](#pingservers)
-  - [`teleserver`](#teleserver)
-  - [`toolbox worker`](#toolbox-worker) — file-system task queue ([full docs](docs/tasker.md))
+  - `[telesend](#telesend)`
+  - `[telesend-data](#telesend-data)`
+  - `[pingservers](#pingservers)`
+  - `[teleserver](#teleserver)`
+  - `[toolbox worker](#toolbox-worker)` — file-system task queue ([full docs](docs/tasker.md))
 - [Path utilities](#path-utilities)
-  - [`get_versions()`](#get_versionspath)
-  - [`path_versioned()`](#path_versionedpath-versionnext-before_extensionfalse)
-  - [`makedir_versioned()`](#makedir_versionedpath)
+  - `[get_versions()](#get_versionspath)`
+  - `[path_versioned()](#path_versionedpath-versionnext-before_extensionfalse)`
+  - `[makedir_versioned()](#makedir_versionedpath)`
 - [sys.path utilities](#syspath-utilities)
-  - [`update()`](#updatedepth1-ancestor_namenone)
-  - [`find_in_path()`](#find_in_pathpath)
+  - `[update()](#updatedepth1-ancestor_namenone)`
+  - `[find_in_path()](#find_in_pathpath)`
 - [Logging utilities](#logging-utilities)
-  - [`setup_loggers()`](#setup_loggers)
-  - [`report_errors()`](#report_errorsfunc--raise_errorfalse-logger)
-  - [`get_telegram_handler()`](#get_telegram_handlerchat_id-)
-  - [`get_file_handler()`](#get_file_handlerpathnone-levelloggininfo-modea)
+  - `[setup_loggers()](#setup_loggers)`
+  - `[report_errors()](#report_errorsfunc--raise_errorfalse-logger)`
+  - `[get_telegram_handler()](#get_telegram_handlerchat_id-)`
+  - `[get_file_handler()](#get_file_handlerpathnone-levelloggininfo-modea)`
 
 ---
 
@@ -132,6 +132,7 @@ telesend "deployment finished on node-3"
 ```
 
 Output in Telegram:
+
 ```
 *my-machine*  `2026-03-29 14:00:00` 🔵
 deployment finished on node-3
@@ -143,26 +144,31 @@ deployment finished on node-3
 
 Sends a file (image, video, audio, or any document) to a Telegram chat. The endpoint is picked automatically from the file's MIME type:
 
-| Extension / MIME | Endpoint | Compression |
-| --- | --- | --- |
-| `image/*` (jpg, png, …) | `sendPhoto` | Re-encoded by Telegram |
-| `video/*` (mp4, …) | `sendVideo` | Re-encoded by Telegram |
-| `audio/*` (mp3, wav, …) | `sendAudio` | Kept if compatible |
-| anything else | `sendDocument` | None — byte-perfect |
+
+| Extension / MIME        | Endpoint       | Compression            |
+| ----------------------- | -------------- | ---------------------- |
+| `image/*` (jpg, png, …) | `sendPhoto`    | Re-encoded by Telegram |
+| `video/*` (mp4, …)      | `sendVideo`    | Re-encoded by Telegram |
+| `audio/*` (mp3, wav, …) | `sendAudio`    | Kept if compatible     |
+| anything else           | `sendDocument` | None — byte-perfect    |
+
 
 Pass `--asfile` to force `sendDocument` for any input — useful for sending images or videos without Telegram's lossy re-encoding.
 
 ```bash
-telesend-data <file> [caption...] [--asfile] [--no-header] [--chat_id=<id>]
+telesend-data <file> [caption...] [--asfile] [--no-header] [--chat_id=<id>] [--thread_id=<id>]
 ```
 
-| Argument         | Description                                                                                    |
-| ---------------- | ---------------------------------------------------------------------------------------------- |
-| `file`           | Path to the file to send.                                                                      |
-| `caption`        | Optional caption text (everything after the file path).                                        |
-| `--asfile`       | Send as document, no compression, no data loss.                                                |
-| `--no-header`    | Omit the `*hostname* *ip*` / timestamp header from the caption.                                |
-| `--chat_id=<id>` | Destination chat. Named shortcut (`default`, `log`, `train`, `claude`) or a raw numeric id. Default: `default`. |
+
+| Argument           | Description                                                                                                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`             | Path to the file to send.                                                                                                                      |
+| `caption`          | Optional caption text (everything after the file path).                                                                                        |
+| `--asfile`         | Send as document, no compression, no data loss.                                                                                                |
+| `--no-header`      | Omit the `*hostname* *ip*` / timestamp header from the caption.                                                                                |
+| `--chat_id=<id>`   | Destination chat. Named shortcut (`default`, `log`, `train`, `claude`) or a raw numeric id. May embed a topic as `<id>:<thread_id>`. Default: `default`. |
+| `--thread_id=<id>` | Message thread (topic) id to send into. Overrides any `:<thread_id>` embedded in `--chat_id`. Default: none.                                    |
+
 
 Requires the `TELEGRAM_BOT_TOKEN` environment variable to be set.
 
@@ -178,6 +184,9 @@ telesend-data demo.mp4 "build worked" --chat_id=claude
 
 # Raw numeric chat id
 telesend-data report.pdf --chat_id=-1001234567890
+
+# Into a specific topic/thread (id 42) of the 'claude' chat
+telesend-data demo.mp4 "build worked" --chat_id=claude:42
 ```
 
 ---
@@ -190,10 +199,12 @@ Continuously pings a list of servers at a given interval. If any server becomes 
 pingservers [interval] <server1> <server2> [...]
 ```
 
+
 | Argument   | Description                                      |
 | ---------- | ------------------------------------------------ |
 | `interval` | Optional. Ping interval in seconds (default: 60) |
 | `server`   | One or more hostnames or IP addresses to monitor |
+
 
 ```bash
 # Ping two servers every 30 seconds
@@ -213,14 +224,16 @@ A Telegram remote shell. Polls a Telegram channel for messages that start with a
 toolbox teleserver [--chat_id log] [--prefix '$'] [--poll_interval 1] [--timeout 30] [--log_path ~/logs/]
 ```
 
-| Argument | Default | Description |
-| --- | --- | --- |
-| `--chat_id` | `log` | Channel to listen on. Named shortcuts: `log`, `train`. Or a raw numeric ID. |
-| `--token` | `$TELEGRAM_BOT_TOKEN` | Telegram bot token. |
-| `--prefix` | `$` | Message prefix that marks a command. Both `$cmd` and `$ cmd` are accepted. |
-| `--poll_interval` | `1.0` | Seconds between polling cycles. |
-| `--timeout` | `30` | Maximum seconds a shell command may run before being killed. |
-| `--log_path` | `~/logs/` | Directory (or `.log` file path) for log output. |
+
+| Argument          | Default               | Description                                                                 |
+| ----------------- | --------------------- | --------------------------------------------------------------------------- |
+| `--chat_id`       | `log`                 | Channel to listen on. Named shortcuts: `log`, `train`. Or a raw numeric ID. Append `:<thread_id>` to scope to a topic, e.g. `log:42`. |
+| `--token`         | `$TELEGRAM_BOT_TOKEN` | Telegram bot token.                                                         |
+| `--prefix`        | `$`                   | Message prefix that marks a command. Both `$cmd` and `$ cmd` are accepted.  |
+| `--poll_interval` | `1.0`                 | Seconds between polling cycles.                                             |
+| `--timeout`       | `30`                  | Maximum seconds a shell command may run before being killed.                |
+| `--log_path`      | `~/logs/`             | Directory (or `.log` file path) for log output.                             |
+
 
 **Usage — in the Telegram channel:**
 
@@ -258,18 +271,20 @@ move them into `completed/` or `failed/` based on the exit code.
 toolbox worker --task-base-path /shared/jobs --loop
 ```
 
-| Argument            | Default              | Description |
-| ------------------- | -------------------- | --- |
-| `--task-base-path`, `-p` | `$TASK_BASE_PATH` | Root directory containing `pending/`, `running/`, … |
-| `--worker-name`, `-n` | hostname           | Identifier embedded into running/completed file names. |
-| `--loop`            | off                  | Poll forever instead of processing a single task and exiting. |
-| `--no-random`       | off                  | Pick the first listed pending task instead of a random one. |
-| `--idle-sleep`      | `10`                 | Seconds to sleep when the queue is empty. |
-| `--failure-sleep`   | `2`                  | Seconds to sleep after a failed task. |
-| `--restart-sleep`   | `5`                  | Seconds to sleep after an unhandled exception in `--loop` mode. |
-| `--stdout-dir`      | `<task_base_path>/stdout/` | Directory for per-task stdout/stderr capture files. |
-| `--log-path`        | `<task_base_path>/logs/<worker_name>.log` | Worker log file (or directory). |
-| `--telegram`        | off                  | Forward `ERROR`-level log records to Telegram. |
+
+| Argument                 | Default                                   | Description                                                     |
+| ------------------------ | ----------------------------------------- | --------------------------------------------------------------- |
+| `--task-base-path`, `-p` | `$TASK_BASE_PATH`                         | Root directory containing `pending/`, `running/`, …             |
+| `--worker-name`, `-n`    | hostname                                  | Identifier embedded into running/completed file names.          |
+| `--loop`                 | off                                       | Poll forever instead of processing a single task and exiting.   |
+| `--no-random`            | off                                       | Pick the first listed pending task instead of a random one.     |
+| `--idle-sleep`           | `10`                                      | Seconds to sleep when the queue is empty.                       |
+| `--failure-sleep`        | `2`                                       | Seconds to sleep after a failed task.                           |
+| `--restart-sleep`        | `5`                                       | Seconds to sleep after an unhandled exception in `--loop` mode. |
+| `--stdout-dir`           | `<task_base_path>/stdout/`                | Directory for per-task stdout/stderr capture files.             |
+| `--log-path`             | `<task_base_path>/logs/<worker_name>.log` | Worker log file (or directory).                                 |
+| `--telegram`             | off                                       | Forward `ERROR`-level log records to Telegram.                  |
+
 
 For the file-name grammar (priority `!`, task arrays `[N]`,
 non-propagating `*`), the on-disk layout, the programmatic API, and
@@ -277,7 +292,7 @@ the concurrency model, see the dedicated reference:
 
 → **[docs/tasker.md](docs/tasker.md)**
 
-A runnable demo is in [`examples/worker/`](examples/worker/README.md).
+A runnable demo is in `[examples/worker/](examples/worker/README.md)`.
 
 ---
 
@@ -445,7 +460,7 @@ def strict():
 
 ### `get_telegram_handler(chat_id, ...)`
 
-Creates a `[TelegramHandler](https://github.com/sashel/telegram-handler)` that posts log records to a Telegram chat. `chat_id` can be a raw integer chat ID or a named shortcut (`"log"` or `"train"`).
+Creates a `[TelegramHandler](https://github.com/sashel/telegram-handler)` that posts log records to a Telegram chat. `chat_id` can be a raw integer chat ID or a named shortcut (`"log"` or `"train"`), optionally with a `:<thread_id>` suffix (e.g. `"log:42"`) to post into a specific topic/thread.
 
 ```python
 from toolbox import get_telegram_handler
