@@ -3,12 +3,14 @@ import toolbox
 from toolbox.teleserver import main as _teleserver_main
 from toolbox.tasker.worker import main as _worker_main
 from toolbox.telesend_data import main as _telesend_data_main
+from toolbox.scripts import get_claude_cwd as _get_claude_cwd
 
 
 # Simple function commands: called with positional args and --key=value kwargs.
 COMMANDS = {
     "git_info": toolbox.git_info,
-    "local_ip": toolbox.get_local_ip
+    "local_ip": toolbox.get_local_ip,
+    "get-claude-cwd": _get_claude_cwd,
 }
 
 # Subcommands that own their own argparse.  sys.argv[1] (the subcommand name)
