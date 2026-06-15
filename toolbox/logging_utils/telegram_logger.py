@@ -11,8 +11,33 @@ import telegram_handler.formatters
 from telegram_handler import TelegramHandler, MarkdownFormatter, TelegramFormatter, HtmlFormatter
 
 
-from toolbox.configs.telegram import TELEGRAM_BOT_TOKEN, CHANNEL_IDS
+from toolbox.configs.telegram import TELEGRAM_BOT_TOKEN, CHANNEL_IDS, resolve_chat_target
 from toolbox.configs.emoji import EMOJI
+
+
+class _ThreadAwareTelegramHandler(TelegramHandler):
+    """:class:`TelegramHandler` understanding a combined ``<chat>:<thread>`` id.
+
+    The vendored ``telegram_handler.TelegramHandler`` has no
+    ``message_thread_id`` support and treats ``chat_id`` opaquely, so split the
+    chat id at the only point it matters — the outgoing request.
+    """
+
+    @staticmethod
+    def _split(kwargs: dict) -> dict:
+        if "chat_id" in kwargs:
+            cid, thread_id = resolve_chat_target(kwargs["chat_id"])
+            kwargs["chat_id"] = cid
+            if thread_id is not None:
+                kwargs.setdefault("message_thread_id", thread_id)
+        return kwargs
+
+    def send_message(self, text, **kwargs):
+        return super().send_message(text, **self._split(kwargs))
+
+    def send_document(self, text, document, **kwargs):
+        return super().send_document(text, document, **self._split(kwargs))
+
 
 def get_telegram_handler(
     chat_id: Union[int, str],
@@ -24,7 +49,8 @@ def get_telegram_handler(
     """Create a :class:`TelegramHandler` that posts log records to a Telegram chat.
 
     *chat_id* can be a raw Telegram chat/channel ID or one of the named shortcuts
-    defined in :data:`CHANNEL_IDS` (``"log"`` or ``"train"``).
+    defined in :data:`CHANNEL_IDS` (``"log"`` or ``"train"``). Append
+    ``":<thread_id>"`` (e.g. ``"log:42"``) to post into a specific topic/thread.
 
     The message format includes the local IP suffix so it's easy to identify
     which machine sent the record.  When *emoji* is True a random coloured
@@ -55,9 +81,6 @@ def get_telegram_handler(
             "environment variable or passed explicitly."
         )
 
-    if chat_id in CHANNEL_IDS:
-        chat_id = CHANNEL_IDS[chat_id]
-
     if disable_notification is None:
         disable_notification = level < logging.INFO
 
@@ -70,7 +93,7 @@ def get_telegram_handler(
 
     datefmt = '%Y-%m-%d %H:%M:%S'
 
-    handler = TelegramHandler(
+    handler = _ThreadAwareTelegramHandler(
         token=token,
         chat_id=chat_id,
         level=level,
