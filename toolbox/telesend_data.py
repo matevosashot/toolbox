@@ -1,11 +1,22 @@
+"""Send a file (photo/video/audio/document) or a plain text message to a
+Telegram chat from the command line.
+
+If the first positional argument is an existing file it is uploaded with the
+appropriate method; otherwise all positional arguments are joined and sent as a
+text message.
+"""
+
 from __future__ import annotations
 
+import argparse
+import asyncio
 import mimetypes
 import sys
 from datetime import datetime
 from pathlib import Path
 
-import requests
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import TelegramError
 
 from toolbox.configs.telegram import CHANNEL_IDS, TELEGRAM_BOT_TOKEN
 from toolbox.machine import get_hostname, get_local_ip
@@ -13,11 +24,12 @@ from toolbox.machine import get_hostname, get_local_ip
 CAPTION_LIMIT = 1024
 TEXT_LIMIT = 4096
 
+# kind -> (Bot method name, keyword for the file payload)
 ENDPOINTS = {
-    "photo": ("sendPhoto", "photo"),
-    "video": ("sendVideo", "video"),
-    "audio": ("sendAudio", "audio"),
-    "document": ("sendDocument", "document"),
+    "photo": ("send_photo", "photo"),
+    "video": ("send_video", "video"),
+    "audio": ("send_audio", "audio"),
+    "document": ("send_document", "document"),
 }
 
 
@@ -51,100 +63,135 @@ def _build_caption(user_caption: str, no_header: bool, limit: int = CAPTION_LIMI
     return caption
 
 
-USAGE = (
-    "Usage: telesend-data <file|text> [caption...] [--asfile] [--no-header] [--chat_id=<id>]\n"
-    "Send an image / video / audio / file or a plain text message to a Telegram chat.\n"
-    "  If the first positional arg is not an existing file (or is empty),\n"
-    "  the positional args are joined and sent as a text message.\n"
-    "  --asfile         send as document (no compression, no data loss)\n"
-    "  --no-header      omit the hostname/timestamp caption header\n"
-    f"  --chat_id=<id>   named shortcut ({', '.join(CHANNEL_IDS)}) or raw numeric id\n"
-    "                   (default: 'default')"
-)
+def _resolve_chat_id(value: str) -> tuple[str, str | None]:
+    """Resolve a ``<chat>[:<thread>]`` target to ``(chat_id_str, thread_id_or_None)``.
 
-
-def _resolve_chat_id(value: str) -> str:
-    if value in CHANNEL_IDS:
-        return str(CHANNEL_IDS[value])
+    ``<chat>`` may be a named shortcut from :data:`CHANNEL_IDS` or a raw numeric
+    id; the optional ``<thread>`` suffix is a Telegram topic id.
+    """
+    chat_part, sep, thread_part = value.partition(":")
+    embedded_thread = thread_part if sep and thread_part else None
+    if chat_part in CHANNEL_IDS:
+        return str(CHANNEL_IDS[chat_part]), embedded_thread
     try:
-        int(value)
+        int(chat_part)
     except ValueError:
-        print(
-            f"Unknown chat_id '{value}'. "
-            f"Use a numeric id or one of: {', '.join(CHANNEL_IDS)}",
-            file=sys.stderr,
+        raise SystemExit(
+            f"Unknown chat_id '{chat_part}'. "
+            f"Use a numeric id or one of: {', '.join(CHANNEL_IDS)}"
         )
-        sys.exit(2)
-    return value
+    return chat_part, embedded_thread
 
 
-def _parse_argv(argv: list[str]) -> tuple[str, str, bool, bool, str]:
-    asfile = no_header = False
-    chat_id = "default"
-    positional: list[str] = []
-    for tok in argv:
-        if tok in ("-h", "--help"):
-            print(USAGE)
-            sys.exit(0)
-        elif tok == "--asfile":
-            asfile = True
-        elif tok == "--no-header":
-            no_header = True
-        elif tok.startswith("--chat_id="):
-            chat_id = tok.split("=", 1)[1]
-        else:
-            positional.append(tok)
-    if not positional:
-        print(USAGE, file=sys.stderr)
-        sys.exit(2)
-    return positional[0], " ".join(positional[1:]), asfile, no_header, chat_id
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="telesend-data",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "content",
+        nargs="+",
+        metavar="<file|text> [caption...]",
+        help="A file path to upload, or text to send. Extra args become the "
+        "caption (for files) or are appended to the text message.",
+    )
+    parser.add_argument(
+        "--asfile",
+        action="store_true",
+        help="Send as a document (no compression, no data loss).",
+    )
+    parser.add_argument(
+        "--no-header",
+        action="store_true",
+        help="Omit the hostname/timestamp caption header.",
+    )
+    parser.add_argument(
+        "--chat_id",
+        default="default",
+        metavar="<id>",
+        help=f"Named shortcut ({', '.join(CHANNEL_IDS)}) or raw numeric id; may "
+        "embed a topic as '<id>:<thread_id>' (default: 'default').",
+    )
+    parser.add_argument(
+        "--thread_id",
+        default=None,
+        metavar="<id>",
+        help="Message thread (topic) id; overrides any ':<thread_id>' embedded "
+        "in --chat_id.",
+    )
+    parser.add_argument(
+        "--token",
+        default=None,
+        metavar="<token>",
+        help="Telegram bot token (default: TELEGRAM_BOT_TOKEN env var).",
+    )
+    parser.add_argument(
+        "--claude_session",
+        default=None,
+        metavar="<session_id>",
+        help="Attach a 'claude' inline button with callback data "
+        "'claude:<session_id>'.",
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    file_arg, caption_arg, asfile, no_header, chat_id = _parse_argv(sys.argv[1:])
+async def _run(args: argparse.Namespace, token: str) -> int:
+    resolved_chat, embedded_thread = _resolve_chat_id(args.chat_id)
+    # An explicit --thread_id flag wins over a ':<thread>' embedded in --chat_id.
+    thread_id = args.thread_id if args.thread_id is not None else embedded_thread
+    common = {"chat_id": resolved_chat, "parse_mode": "Markdown"}
+    if thread_id is not None:
+        common["message_thread_id"] = int(thread_id)
+    if args.claude_session:
+        common["reply_markup"] = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("claude", callback_data=f"claude:{args.claude_session}")]]
+        )
 
-    if not TELEGRAM_BOT_TOKEN:
-        print("TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
-        sys.exit(1)
+    file_arg = args.content[0]
+    extra = " ".join(args.content[1:])
+    path = Path(file_arg)
 
-    resolved_chat = _resolve_chat_id(chat_id)
-    is_file = bool(file_arg) and Path(file_arg).is_file()
+    async with Bot(token) as bot:
+        if file_arg and path.is_file():
+            kind = _pick_kind(path, args.asfile)
+            method_name, field = ENDPOINTS[kind]
+            send = getattr(bot, method_name)
+            with path.open("rb") as fh:
+                await send(
+                    caption=_build_caption(extra, args.no_header),
+                    **{field: fh},
+                    **common,
+                )
+            print(f"sent via {method_name} ({path.name})")
+            return 0
 
-    if is_file:
-        path = Path(file_arg)
-        kind = _pick_kind(path, asfile)
-        method, field = ENDPOINTS[kind]
-        caption = _build_caption(caption_arg, no_header)
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
-        data = {"chat_id": resolved_chat, "caption": caption, "parse_mode": "Markdown"}
-        with path.open("rb") as fh:
-            files = {field: (path.name, fh)}
-            resp = requests.post(url, data=data, files=files, timeout=120)
-        sent_descr = f"{method} ({path.name})"
-    else:
-        text_body = " ".join(t for t in (file_arg, caption_arg) if t)
+        text_body = " ".join(t for t in (file_arg, extra) if t)
         if not text_body:
-            print(USAGE, file=sys.stderr)
-            sys.exit(2)
-        text = _build_caption(text_body, no_header, TEXT_LIMIT)
-        method = "sendMessage"
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
-        data = {"chat_id": resolved_chat, "text": text, "parse_mode": "Markdown"}
-        resp = requests.post(url, data=data, timeout=60)
-        sent_descr = f"{method} (text)"
+            print("Nothing to send: provide a file path or text.", file=sys.stderr)
+            return 2
+        await bot.send_message(
+            text=_build_caption(text_body, args.no_header, TEXT_LIMIT),
+            **common,
+        )
+        print("sent via send_message (text)")
+        return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+
+    token = args.token or TELEGRAM_BOT_TOKEN
+    if not token:
+        print("No bot token: pass --token=<token> or set TELEGRAM_BOT_TOKEN", file=sys.stderr)
+        return 1
 
     try:
-        body = resp.json()
-    except ValueError:
-        print(f"HTTP {resp.status_code}: {resp.text}", file=sys.stderr)
-        sys.exit(1)
-
-    if not body.get("ok"):
-        print(f"Telegram error: {body}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"sent via {sent_descr}")
+        return asyncio.run(_run(args, token))
+    except TelegramError as exc:
+        print(f"Telegram error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
