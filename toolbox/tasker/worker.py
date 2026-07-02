@@ -65,6 +65,29 @@ When the task is moved to ``running/`` it is renamed to
 ``__<YYYYMMDD-HHMMSS>`` (and ``__<exit_code>`` on failure) is appended
 so the history is self-documenting from ``ls``.
 
+Resource constraints
+--------------------
+A job script may advertise the resources it needs via ``#WORKER_*`` header
+comment lines. Before claiming a task the worker parses these directives and
+checks the machine's *current* resources; if any constraint is unmet the task
+is left untouched in ``pending/`` and re-checked on the next poll (it is never
+auto-failed). Directives are scanned from the top of the file and parsing
+stops at the first line of real code, so keep them in the header::
+
+    #!/usr/bin/env bash
+    #WORKER_GPU_MEM 20GB      # min free memory required on each target GPU
+    #WORKER_GPU_LOAD 80%      # each target GPU's utilisation must be < 80%
+    #WORKER_MEM 100GB         # min available system RAM
+    #WORKER_GPU_DEVICES 0,1   # GPU indices the task uses (also exported as
+                              #   CUDA_VISIBLE_DEVICES to the task)
+    python train.py
+
+Sizes accept ``KB/MB/GB/TB`` and ``KiB/MiB/GiB/TiB`` (binary, 1024-based).
+The set of GPUs each constraint is checked against is resolved as:
+``#WORKER_GPU_DEVICES`` → ``CUDA_VISIBLE_DEVICES`` in the worker's environment
+→ all GPUs. Every GPU in that set must *individually* satisfy the GPU
+constraints. See :mod:`toolbox.tasker.constraints` for details.
+
 Usage
 -----
 Single iteration (process one task and exit)::
@@ -102,336 +125,18 @@ import argparse
 import logging
 import os
 import random as _random  # aliased to avoid clashing with the `randomize` arg
-import re
-import signal
-import subprocess
 import time
 import traceback
-from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from toolbox.logging_utils import setup_loggers
 
-
-# --------------------------------------------------------------------------- #
-# Helpers
-# --------------------------------------------------------------------------- #
-
-# Format reused for every timestamp embedded in a file name. Keep it
-# lexicographically sortable so `ls` shows tasks in chronological order.
-_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
-
-
-def _now() -> str:
-    return datetime.now().strftime(_TIMESTAMP_FMT)
-
-
-def _hostname() -> str:
-    return os.uname()[1]
-
-
-# --------------------------------------------------------------------------- #
-# Task
-# --------------------------------------------------------------------------- #
-
-class Task:
-    """A single bash script to be executed by a :class:`Worker`.
-
-    The lifecycle is::
-
-        Task(name)  ->  acquire()  ->  run()  ->  completed() / failed()
-
-    Each step renames the underlying file so its location on disk
-    reflects its state.
-    """
-
-    # Pattern matched against `task_name` to decide which Task subclass to
-    # instantiate. The base class accepts anything.
-    _PATTERN: Optional[re.Pattern] = None
-
-    def __init__(self, task_name: str, worker: "Worker"):
-        self.pending_task: str = task_name
-        self.worker: "Worker" = worker
-        self.worker_name: str = worker.worker_name
-
-        # Filled in once the corresponding lifecycle step succeeds.
-        self.running_task: Optional[str] = None
-        self.exit_code: Optional[int] = None
-        self.stdout_path: Optional[str] = None
-        # Set to True if the worker kills the subprocess because the
-        # running/<file> entry was deleted out from under it. Tells
-        # Worker.run() to skip the rename to failed/ (the file is gone).
-        self.cancelled: bool = False
-
-    # ------------------------------------------------------------------ #
-    # Lifecycle                                                           #
-    # ------------------------------------------------------------------ #
-
-    def acquire(self) -> Optional["Task"]:
-        """Atomically move the task from ``pending/`` to ``running/``.
-
-        Returns ``self`` on success, ``None`` if another worker won the
-        race (or the file disappeared for any other reason).
-        """
-        src = os.path.join(self.worker.pending_dir, self.pending_task)
-        # Acquire timestamp goes at the front so `ls running/` sorts
-        # chronologically across heterogeneous task names.
-        dest_name = f"{_now()}__{self.worker_name}__{self.pending_task}"
-        dest = os.path.join(self.worker.running_dir, dest_name)
-
-        try:
-            # os.rename is atomic on the same filesystem and raises
-            # FileNotFoundError if `src` was claimed by another worker
-            # in the meantime — exactly the semantics we want.
-            os.rename(src, dest)
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            self.worker.logger.warning(
-                "Could not acquire %s: %s", self.pending_task, exc
-            )
-            return None
-
-        self.running_task = dest_name
-        return self
-
-    def run(self) -> int:
-        """Execute the script and return its exit code."""
-        if self.running_task is None:
-            raise RuntimeError("Task.run() called before successful acquire().")
-
-        task_path = os.path.join(self.worker.running_dir, self.running_task)
-        self.stdout_path = os.path.join(
-            self.worker.stdout_dir, f"{self.running_task}.out"
-        )
-
-        self.worker.logger.info("Check output at\n%s", self.stdout_path)
-        self.exit_code = self._run_script(task_path, self.stdout_path)
-        return self.exit_code
-
-    def completed(self) -> None:
-        """Move the task into the ``completed/`` directory."""
-        self._move_to(self.worker.completed_dir, prefix=f"{_now()}__")
-
-    def failed(self) -> None:
-        """Move the task into the ``failed/`` directory.
-
-        The completion timestamp is prepended (so ``ls failed/`` sorts
-        chronologically); the exit code is appended for easy triage.
-        """
-        self._move_to(
-            self.worker.failed_dir,
-            prefix=f"{_now()}__",
-            suffix=f"__{self.exit_code}",
-        )
-
-    # ------------------------------------------------------------------ #
-    # Internals                                                           #
-    # ------------------------------------------------------------------ #
-
-    def _move_to(self, target_dir: str, prefix: str = "", suffix: str = "") -> None:
-        if self.running_task is None:
-            return
-        src = os.path.join(self.worker.running_dir, self.running_task)
-        dest = os.path.join(target_dir, f"{prefix}{self.running_task}{suffix}")
-        os.rename(src, dest)
-
-    # Map file extension to the interpreter used to execute it. Takes
-    # precedence over the executable bit and any shebang. Override on
-    # subclasses to add languages.
-    _EXTENSION_INTERPRETERS = {
-        ".py": "python3",
-    }
-
-    def _run_script(self, script_path: str, output_path: str) -> int:
-        """Run *script_path*, tee-ing combined stdout/stderr to *output_path*.
-
-        ``set -o pipefail`` is critical: without it the exit code of a
-        ``cmd | tee`` pipeline is always ``tee``'s (which is 0), so
-        every failed task would be misclassified as a success.
-
-        While the subprocess runs, the worker watches *script_path* —
-        the entry under ``running/`` — and if it disappears (the user
-        ``rm``'d it to cancel the task), the whole process group is
-        killed. ``--watch-poll 0`` disables this and falls back to a
-        plain blocking wait.
-        """
-        cmd = self._build_shell_command(script_path, output_path)
-        poll = self.worker.watch_poll
-
-        # start_new_session=True puts bash and the entire pipeline
-        # (`cmd | tee`) into a new process group, so a single killpg
-        # reaps everything.
-        proc = subprocess.Popen(
-            cmd, shell=True, executable="/bin/bash",
-            start_new_session=True,
-        )
-
-        if poll <= 0:
-            proc.wait()
-            return proc.returncode
-
-        while True:
-            try:
-                proc.wait(timeout=poll)
-                return proc.returncode
-            except subprocess.TimeoutExpired:
-                pass
-            if not os.path.exists(script_path):
-                self.cancelled = True
-                self.worker.logger.warning(
-                    "Running file %s was deleted; killing task.",
-                    self.running_task,
-                )
-                self._terminate(proc)
-                return proc.returncode
-
-    def _terminate(self, proc: subprocess.Popen, grace: float = 5.0) -> None:
-        """SIGTERM the subprocess group, escalate to SIGKILL after *grace*.
-
-        Killing the group (rather than just ``proc.pid``) ensures the
-        whole ``bash`` pipeline — interpreter, the script, and ``tee``
-        — goes down together.
-        """
-        try:
-            pgid = os.getpgid(proc.pid)
-        except ProcessLookupError:
-            return
-        try:
-            os.killpg(pgid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        try:
-            proc.wait(timeout=grace)
-            return
-        except subprocess.TimeoutExpired:
-            self.worker.logger.warning(
-                "Task %s did not exit %.1fs after SIGTERM; sending SIGKILL.",
-                self.running_task, grace,
-            )
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-        proc.wait()
-
-    def _runner_command(self, script_path: str) -> str:
-        """Return the shell snippet that invokes *script_path*.
-
-        Resolution order:
-
-        1. If the original task name has an extension registered in
-           :attr:`_EXTENSION_INTERPRETERS` (e.g. ``.py``) → use that
-           interpreter, regardless of the executable bit or shebang.
-        2. Else if the file is executable → exec it directly so its
-           shebang chooses the interpreter.
-        3. Else → run with ``bash`` (lets users drop plain shell
-           snippets into ``pending/`` without having to ``chmod +x``).
-        """
-        ext = os.path.splitext(self.pending_task)[1].lower()
-        interpreter = self._EXTENSION_INTERPRETERS.get(ext)
-        if interpreter is not None:
-            return f'{interpreter} "{script_path}"'
-        if os.access(script_path, os.X_OK):
-            return f'"{script_path}"'
-        return f'bash "{script_path}"'
-
-    def _script_args(self) -> List[str]:
-        """Extra positional args appended after the script path.
-
-        Default: none. Override in subclasses (see :class:`TaskArray`,
-        which appends ``num`` as ``$1``).
-        """
-        return []
-
-    def _build_shell_command(self, script_path: str, output_path: str) -> str:
-        cmd = self._runner_command(script_path)
-        for arg in self._script_args():
-            cmd += f' "{arg}"'
-        return f'set -o pipefail; {cmd} 2>&1 | tee "{output_path}"'
-
-    # ------------------------------------------------------------------ #
-    # Classification                                                      #
-    # ------------------------------------------------------------------ #
-
-    @classmethod
-    def matches(cls, task_name: str) -> bool:
-        """Return True if *task_name* should be handled by this class."""
-        return cls._PATTERN is None or cls._PATTERN.match(task_name) is not None
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}({self.pending_task!r})"
-
-
-# --------------------------------------------------------------------------- #
-# TaskArray
-# --------------------------------------------------------------------------- #
-
-class TaskArray(Task):
-    """A task whose file name encodes a remaining iteration count.
-
-    Examples of valid names::
-
-        [10]train          # run 10 times, propagate
-        ![5]train          # priority, run 5 times, propagate
-        *[3]train          # run once at N=3, do NOT propagate
-        !*[3]train         # priority + non-propagating
-
-    On acquisition, if ``num > 0`` and the ``*`` flag is absent, a copy
-    named ``<flags>[num-1]<name>`` is dropped back into ``pending/``.
-    The current ``num`` is passed to the script as ``$1``.
-    """
-
-    # Single source of truth for the file-name grammar.
-    _PATTERN = re.compile(r"^(?P<flags>[!*]*)\[(?P<num>\d+)\](?P<name>.*)$")
-
-    def __init__(self, task_name: str, worker: "Worker"):
-        super().__init__(task_name, worker=worker)
-        decomposed = self._decompose(task_name)
-        if decomposed is None:
-            raise ValueError(f"{task_name!r} is not a valid TaskArray name.")
-        self.flags, self.num, self.name = decomposed
-
-    # ------------------------------------------------------------------ #
-
-    def acquire(self) -> Optional["TaskArray"]:
-        acquired = super().acquire()
-        if acquired is None:
-            return None
-
-        # Only spawn a follow-up if there are iterations left and the
-        # array has not been frozen with the `*` flag.
-        if self.num > 0 and "*" not in self.flags:
-            self._spawn_next()
-
-        return self
-
-    def _spawn_next(self) -> None:
-        """Create the ``[num-1]name`` follow-up file in pending/."""
-        src = os.path.join(self.worker.running_dir, self.running_task)
-        next_name = f"{self.flags}[{self.num - 1}]{self.name}"
-        dest = os.path.join(self.worker.pending_dir, next_name)
-        # `cp` instead of `os.rename` because the original is now in
-        # `running/` and must stay there for execution.
-        subprocess.run(["cp", src, dest], check=False)
-
-    def _script_args(self) -> List[str]:
-        # Pass the current iteration count as $1 to the script.
-        return [str(self.num)]
-
-    # ------------------------------------------------------------------ #
-
-    @classmethod
-    def _decompose(cls, task_name: str):
-        match = cls._PATTERN.match(task_name)
-        if match is None:
-            return None
-        return match.group("flags"), int(match.group("num")), match.group("name")
-
-
-# All concrete Task classes, in priority order: the first one whose
-# `matches()` returns True is used to wrap the file name.
-_TASK_TYPES = (TaskArray, Task)
+# Task / TaskArray now live in task.py; re-exported here for backward
+# compatibility (`from toolbox.tasker.worker import Task` still works).
+from .resources import GpuInfo, available_ram, query_gpus
+from .task import Task, TaskArray, _hostname, _now, _TASK_TYPES  # noqa: F401
+
+__all__ = ["Task", "TaskArray", "Worker", "main"]
 
 
 # --------------------------------------------------------------------------- #
@@ -563,11 +268,40 @@ class Worker:
         # Skip dotfiles and editor leftovers like `.foo.swp` / `foo~`.
         return [e for e in entries if not e.startswith(".") and not e.endswith("~")]
 
-    def get_pending_task(self) -> Optional[Task]:
-        """Pick a single pending task and wrap it in the right Task class.
+    def _wrap(self, name: str) -> Task:
+        """Wrap a pending file name in the most specific matching Task class."""
+        for task_cls in _TASK_TYPES:
+            if task_cls.matches(name):
+                return task_cls(name, worker=self)
+        # Should never happen because Task.matches always returns True,
+        # but guard anyway.
+        return Task(name, worker=self)
 
-        Priority tasks (``!``-prefixed) are preferred over the rest; the
-        chosen subset is then sampled randomly or in directory order.
+    def _ordered_candidates(self, tasks: List[str]) -> List[str]:
+        """Return pending names ordered by preference.
+
+        Priority (``!``-prefixed) tasks come first so they are tried before
+        the rest, but non-priority tasks remain as a fallback (e.g. when every
+        priority task is blocked by resource constraints). Within each group
+        the order is randomised unless :attr:`randomize` is False.
+        """
+        priority = [t for t in tasks if t.startswith("!")]
+        others = [t for t in tasks if not t.startswith("!")]
+        if self.randomize:
+            _random.shuffle(priority)
+            _random.shuffle(others)
+        return priority + others
+
+    def get_pending_task(self) -> Optional[Task]:
+        """Pick a runnable pending task, or ``None`` if none can run now.
+
+        Priority tasks (``!``-prefixed) are preferred. Each candidate's
+        ``#WORKER_*`` resource constraints are checked against the machine's
+        current state; tasks whose constraints are unmet are skipped (left in
+        ``pending/``) and the next candidate is tried. The live resource
+        snapshot (GPUs + RAM) is probed at most once per call, and only when a
+        candidate actually declares a constraint, so the unconstrained fast
+        path stays free of ``nvidia-smi``/``psutil`` calls.
         """
         tasks = self._list_pending()
         if not tasks:
@@ -578,16 +312,40 @@ class Worker:
             "%d pending task%s (%d priority).",
             len(tasks), "" if len(tasks) == 1 else "s", len(priority),
         )
-        candidates = priority or tasks
 
-        name = _random.choice(candidates) if self.randomize else candidates[0]
+        probe: Optional[Tuple[List[GpuInfo], Optional[int]]] = None
+        blocked: List[Tuple[str, List[str]]] = []
 
-        for task_cls in _TASK_TYPES:
-            if task_cls.matches(name):
-                return task_cls(name, worker=self)
-        # Should never happen because Task.matches always returns True,
-        # but guard anyway.
-        return Task(name, worker=self)
+        for name in self._ordered_candidates(tasks):
+            task = self._wrap(name)
+            constraints = task.constraints()
+
+            if constraints.is_empty():
+                return task
+
+            if probe is None:
+                # Lazily probe once and reuse for every remaining candidate.
+                probe = (query_gpus(), available_ram())
+            gpus, ram = probe
+
+            ok, reasons = constraints.check(gpus, ram)
+            if not ok:
+                blocked.append((name, reasons))
+                continue
+
+            cvd = constraints.cuda_visible_devices()
+            if cvd is not None:
+                task.extra_env["CUDA_VISIBLE_DEVICES"] = cvd
+            return task
+
+        if blocked:
+            name, reasons = blocked[0]
+            self.logger.info(
+                "%d task%s blocked by resource constraints; e.g. %s: %s",
+                len(blocked), "" if len(blocked) == 1 else "s",
+                name, "; ".join(reasons),
+            )
+        return None
 
     # ------------------------------------------------------------------ #
     # Main loop                                                           #
@@ -597,7 +355,7 @@ class Worker:
         """Process at most one task. Safe to call in a loop."""
         task = self.get_pending_task()
         if task is None:
-            self.logger.info("No pending tasks. Sleeping for %.1fs...",
+            self.logger.info("No runnable tasks. Sleeping for %.1fs...",
                              self.idle_sleep)
             time.sleep(self.idle_sleep)
             return

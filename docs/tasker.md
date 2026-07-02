@@ -22,6 +22,7 @@ queue of "jobs to run".
   - [Task arrays (`[N]`)](#task-arrays-n)
   - [Non-propagating arrays (`*`)](#non-propagating-arrays-)
   - [Combining flags](#combining-flags)
+- [Resource constraints](#resource-constraints)
 - [CLI reference](#cli-reference)
 - [Programmatic API](#programmatic-api)
   - [`Worker`](#worker)
@@ -203,6 +204,73 @@ Flags compose freely:
 
 Order of the flag characters does not matter (`!*` and `*!` are
 equivalent).
+
+## Resource constraints
+
+A job script can advertise the machine resources it needs via `#WORKER_*`
+comment directives in its **header**. Before claiming a task, the worker
+parses these directives and compares them against the machine's *current*
+resource state. If any constraint is unmet, the task is **left untouched in
+`pending/`** and re-checked on the next poll — it is never auto-failed, so it
+simply waits for resources to free up (possibly on a different worker).
+
+Directives are ordinary comments, so a constrained script still runs fine by
+hand. They are scanned from the top of the file and parsing **stops at the
+first line of real code**, so keep them in the header block (the shebang and
+other comments are fine in between):
+
+```bash
+#!/usr/bin/env bash
+#WORKER_GPU_MEM 20GB       # need >= 20 GiB free on each target GPU
+#WORKER_GPU_LOAD 80%       # each target GPU's utilisation must be < 80%
+#WORKER_MEM 100GB          # need >= 100 GiB of available system RAM
+#WORKER_GPU_DEVICES 0,1    # the task uses GPUs 0 and 1
+set -euo pipefail
+python train.py
+```
+
+| Directive             | Meaning                                                                 |
+| --------------------- | ----------------------------------------------------------------------- |
+| `#WORKER_GPU_MEM S`   | Minimum **free** memory required on each target GPU.                    |
+| `#WORKER_GPU_LOAD P%` | Each target GPU's current utilisation must be **strictly less** than P. |
+| `#WORKER_MEM S`       | Minimum **available** system RAM (`psutil.virtual_memory().available`). |
+| `#WORKER_GPU_DEVICES` | Comma-separated GPU indices the task uses (see below).                  |
+
+- **Sizes** (`S`) accept `KB`/`MB`/`GB`/`TB` and `KiB`/`MiB`/`GiB`/`TiB`.
+  Bare `GB`/`MB` are treated as **binary** (1024-based) to match how GPU
+  memory is conventionally quoted; `20GB` and `20GiB` are equivalent. A bare
+  number is bytes.
+- The keyword is **case-insensitive** and a space after `#` is allowed
+  (`# worker_mem 8gb` works).
+- A **malformed** value (e.g. `#WORKER_GPU_MEM banana`) does not crash the
+  worker: the task is treated as unsatisfiable and skipped, with the reason
+  logged.
+
+### Which GPUs are checked
+
+GPU constraints (`GPU_MEM`, `GPU_LOAD`) are validated against a **set** of
+GPUs, and **every** GPU in that set must satisfy them individually. The set is
+resolved in this order:
+
+1. `#WORKER_GPU_DEVICES 0,1` if present. The worker also exports
+   `CUDA_VISIBLE_DEVICES=0,1` to the task's environment so it actually uses
+   those GPUs.
+2. Otherwise, `CUDA_VISIBLE_DEVICES` from the worker's own environment.
+3. Otherwise, **all** GPUs on the machine.
+
+GPU state comes from `nvidia-smi`. If a GPU constraint is declared but
+`nvidia-smi` is missing (or no matching device is found), the task is treated
+as unsatisfiable and skipped — a non-GPU box will never wrongly run a GPU job.
+
+### Behaviour notes
+
+- Tasks with **no** directives take a fast path: the worker never shells out to
+  `nvidia-smi` or imports `psutil` for them.
+- When some tasks are runnable and others are blocked, the worker runs a
+  runnable one; priority (`!`) tasks are still preferred, but a blocked
+  priority task falls back to other candidates rather than idling the worker.
+- The resource snapshot is taken at most once per poll and reused across
+  candidates, so a queue full of constrained tasks stays cheap to evaluate.
 
 ## CLI reference
 
