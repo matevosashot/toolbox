@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolbox"
-version = "0.2.0"
+version = "0.2.1"
 description = "A collection of utility functions for machine and git info"
 requires-python = ">=3.8"
 dependencies = [
     "python-telegram-handler @ git+https://github.com/matevosashot/python-telegram-handler.git",
     "python-telegram-bot>=21",
     "requests",
+    "psutil",
 ]
 
 [project.scripts]
