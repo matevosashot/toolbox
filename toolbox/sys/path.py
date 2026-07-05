@@ -42,32 +42,48 @@ def _caller_file_via_stack(stacklevel: int = 1) -> str:
 def update(
     depth: int = 1,
     ancestor_name: Optional[str] = None,
+    contains: Optional[str] = None
 ) -> str:
     """Insert an ancestor directory of the *caller's* file into ``sys.path``.
 
     The function inspects the call stack to find the file from which it was
-    invoked, then ascends either a fixed number of levels (``depth``) or
-    until a directory whose basename matches ``ancestor_name`` is found, and
-    inserts the resulting path at the front of ``sys.path``.
+    invoked, then ascends by one of three strategies and inserts the
+    resulting path at the front of ``sys.path``:
+
+    * a fixed number of levels (``depth``),
+    * until a directory whose basename matches ``ancestor_name``, or
+    * until a directory that contains a child entry named ``contains``.
+
+    ``ancestor_name`` and ``contains`` are mutually exclusive; when either is
+    given, ``depth`` is ignored.
 
     Args:
         depth: Number of directory levels to ascend above the caller's file.
             ``depth=0`` adds the directory directly containing the caller;
             ``depth=1`` (the default) adds its parent, and so on. Ignored
-            when ``ancestor_name`` is provided.
+            when ``ancestor_name`` or ``contains`` is provided.
         ancestor_name: If given, ascend until the basename of the current
             directory equals this string. The search starts at the directory
             containing the caller's file, so passing the caller's own
             directory name returns immediately without ascending.
+        contains: If given, ascend until the current directory contains a
+            child entry (file or directory) with this name. The search starts
+            at the directory containing the caller's file. Inserting the
+            resulting directory makes ``contains`` importable/accessible from
+            ``sys.path``. Mutually exclusive with ``ancestor_name``.
 
     Returns:
         The directory that was inserted into ``sys.path``.
 
     Raises:
-        ValueError: If ``ancestor_name`` is given and no ancestor directory
-            has a matching basename (i.e. the filesystem root is reached
-            first), or if ``depth`` ascends past the filesystem root.
+        ValueError: If both ``ancestor_name`` and ``contains`` are given; if
+            ``ancestor_name``/``contains`` is given and no ancestor directory
+            matches (i.e. the filesystem root is reached first); or if
+            ``depth`` ascends past the filesystem root.
     """
+    if ancestor_name is not None and contains is not None:
+        raise ValueError("Pass either 'ancestor_name' or 'contains', not both")
+
     try:
         caller_file = _caller_file_via_frame(stacklevel=2)
     except (AttributeError, ValueError):
@@ -82,6 +98,15 @@ def update(
                 raise ValueError(
                     f"Directory named {ancestor_name!r} not found in ancestors "
                     f"of {caller_file!r}"
+                )
+            path = parent
+    elif contains is not None:
+        while not os.path.exists(os.path.join(path, contains)):
+            parent = os.path.dirname(path)
+            if parent == path:
+                raise ValueError(
+                    f"No ancestor of {caller_file!r} contains an entry named "
+                    f"{contains!r}"
                 )
             path = parent
     else:
