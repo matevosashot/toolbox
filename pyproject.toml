@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolbox"
-version = "0.2.2"
+version = "0.2.3"
 description = "A collection of utility functions for machine and git info"
 requires-python = ">=3.8"
 dependencies = [

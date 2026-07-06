@@ -39,6 +39,26 @@ def _caller_file_via_stack(stacklevel: int = 1) -> str:
     return inspect.stack(0)[stacklevel].filename
 
 
+def _is_synthetic_caller(caller_file: str) -> bool:
+    """Return whether ``caller_file`` is not a real on-disk source file.
+
+    Interactive environments run code from synthetic files that do not
+    reflect the user's project layout, so ascending their ancestors is
+    meaningless. Examples:
+
+    * IPython/Jupyter (VS Code, JupyterLab) write each cell to a temporary
+      file such as ``/tmp/ipykernel_3142250/1914498567.py``.
+    * Older IPython uses angle-bracket names like ``<ipython-input-1-...>``.
+    * ``exec``/``eval`` of a string reports ``<string>``.
+    """
+    base = os.path.basename(caller_file)
+    if caller_file.startswith("<") or base.startswith("<"):
+        return True
+    if "ipykernel_" in caller_file.replace(os.sep, "/"):
+        return True
+    return not os.path.isabs(caller_file)
+
+
 def update(
     depth: int = 1,
     ancestor_name: Optional[str] = None,
@@ -56,6 +76,11 @@ def update(
 
     ``ancestor_name`` and ``contains`` are mutually exclusive; when either is
     given, ``depth`` is ignored.
+
+    In interactive environments (IPython/Jupyter, including VS Code
+    notebooks) the caller executes from a synthetic file that does not
+    reflect the project layout, so the current working directory is used as
+    the starting point instead of the caller's file location.
 
     Args:
         depth: Number of directory levels to ascend above the caller's file.
@@ -89,7 +114,12 @@ def update(
     except (AttributeError, ValueError):
         caller_file = _caller_file_via_stack(stacklevel=2)
 
-    path = os.path.dirname(os.path.abspath(caller_file))
+    if _is_synthetic_caller(caller_file):
+        # Interactive/Jupyter cells run from a synthetic file; the kernel's
+        # working directory reflects the real project location instead.
+        path = os.path.abspath(os.getcwd())
+    else:
+        path = os.path.dirname(os.path.abspath(caller_file))
 
     if ancestor_name is not None:
         while os.path.basename(path) != ancestor_name:
