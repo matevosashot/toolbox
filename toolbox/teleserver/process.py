@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import subprocess
 import tempfile
 import time
@@ -94,6 +95,11 @@ class ProcessExtension(JobExtension[ProcRecord]):
 
     async def _kill(self, rec: ProcRecord) -> None:
         kill_pgid(rec.pgid)
+
+    async def _shutdown_kill(self, rec: ProcRecord) -> None:
+        # Server is going down: SIGKILL the whole process group so nothing is
+        # left orphaned (the process was started with start_new_session=True).
+        kill_pgid(rec.pgid, signal.SIGKILL)
 
     async def _tail(self, rec: ProcRecord) -> str:
         return read_tail(rec.log_path, TAIL_LINES)

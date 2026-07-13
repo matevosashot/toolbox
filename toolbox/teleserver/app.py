@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import signal
 
 from telegram import Bot, Update
 from telegram.ext import Application, ApplicationBuilder
@@ -48,6 +49,12 @@ class ShellApp:
         self.prefix = prefix
         self.timeout = timeout
 
+        target_chat, thread_id = resolve_chat_target(chat_id)
+        log.debug(
+            "ShellApp init: chat_id=%r resolved to chat=%s thread=%s prefix=%r timeout=%s",
+            chat_id, target_chat, thread_id, prefix, timeout,
+        )
+
         self.application: Application = (
             ApplicationBuilder().token(token).updater(None).build()
         )
@@ -76,14 +83,91 @@ class ShellApp:
         await self.application.stop()
         await self.application.shutdown()
 
+    async def shutdown(self) -> None:
+        """Force-kill every spawned job, then stop the Application.
+
+        Ensures detached ``/process`` commands and ``/tmux``/``/claude``
+        sessions do not outlive the server on shutdown.
+        """
+        for ext in (self.process, self.tmux, self.claude):
+            try:
+                await ext.shutdown()
+            except Exception:
+                log.exception("Error shutting down /%s extension", ext.verb)
+        await self.stop()
+
     async def feed(self, update: Update) -> None:
         chat = update.effective_chat
         target_chat, _ = resolve_chat_target(self.chat_id)
+        incoming = None if chat is None else chat.id
         if chat is None or chat.id != target_chat:
+            log.debug(
+                "feed[%s]: drop update %s — chat %s != target %s",
+                self.chat_id, update.update_id, incoming, target_chat,
+            )
             return
         if not message_thread_ok(update.effective_message, self.chat_id):
+            msg = update.effective_message
+            log.debug(
+                "feed[%s]: drop update %s — thread %s not in scope",
+                self.chat_id, update.update_id,
+                getattr(msg, "message_thread_id", None),
+            )
             return
+        log.debug(
+            "feed[%s]: queue update %s from chat %s",
+            self.chat_id, update.update_id, incoming,
+        )
         await self.application.update_queue.put(update)
+
+
+async def _amain(args, chat_ids: list[str]) -> None:
+    """Build apps + poller and run the loop.
+
+    Everything asyncio-bound (each Application's ``update_queue``, locks, the
+    bot's HTTP client) MUST be constructed *inside* the running event loop.
+    On Python 3.8 an ``asyncio.Queue`` binds to the loop returned by
+    ``get_event_loop()`` at construction time; building the apps before
+    ``asyncio.run()`` would bind their queues to a different loop, so
+    ``update_queue.put`` and the Application's ``update_queue.get`` fetcher
+    would run on separate loops — updates get queued but never dispatched.
+    (Python 3.10+ binds lazily to the running loop and happens to work, which
+    is why this only manifested under python3.8.)
+    """
+    apps = [
+        ShellApp(
+            token=args.token,
+            chat_id=chat_id,
+            prefix=args.prefix,
+            timeout=args.timeout,
+        )
+        for chat_id in chat_ids
+    ]
+
+    if args.poller == "simple":
+        poller: Poller = Poller(apps[0].bot)
+    else:
+        poller = RandomIntervalPoller(apps[0].bot, max_buffer=5)
+
+    # Run the poll loop as a cancellable task so a termination signal
+    # (SIGTERM from `systemctl stop`/`restart`, or SIGINT from Ctrl-C) cancels
+    # it cleanly and lets `_run`'s `finally` force-kill spawned jobs. Without a
+    # handler, the default SIGTERM disposition kills the process outright,
+    # skipping cleanup and orphaning detached jobs / tmux sessions.
+    run_task = asyncio.ensure_future(_run(apps, poller, args.poll_interval))
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, run_task.cancel)
+        except (NotImplementedError, RuntimeError):
+            # Signal handlers are unavailable on some platforms/loops; the
+            # KeyboardInterrupt fallback in main() still covers Ctrl-C.
+            pass
+
+    try:
+        await run_task
+    except asyncio.CancelledError:
+        log.info("Termination signal received, shut down cleanly.")
 
 
 async def _run(apps: list[ShellApp], poller: Poller, poll_interval: float) -> None:
@@ -96,8 +180,12 @@ async def _run(apps: list[ShellApp], poller: Poller, poll_interval: float) -> No
     try:
         while True:
             try:
-                for update in await poller.pull():
-                    print(update)
+                updates = await poller.pull()
+                if updates:
+                    log.debug("Polled %d update(s): %s", len(updates),
+                              [u.update_id for u in updates])
+                for update in updates:
+                    log.debug("Update %s: %s", update.update_id, update)
                     for app in apps:
                         await app.feed(update)
             except asyncio.CancelledError:
@@ -106,8 +194,9 @@ async def _run(apps: list[ShellApp], poller: Poller, poll_interval: float) -> No
                 log.exception("Unhandled error in polling loop")
             await asyncio.sleep(poll_interval)
     finally:
+        log.info("Shutting down: force-killing spawned jobs and tmux sessions ...")
         for app in apps:
-            await app.stop()
+            await app.shutdown()
 
 
 def main() -> None:
@@ -168,32 +257,27 @@ def main() -> None:
         default="~/logs/",
         help="Directory (or .log file path) for log output (default: ~/logs/).",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable DEBUG-level logging (verbose polling/feed logs + ~/logs/debug.log).",
+    )
 
     args = parser.parse_args()
 
     if not args.token:
         parser.error("No token provided. Set --token or $TELEGRAM_BOT_TOKEN.")
 
-    setup_loggers(base_path=args.log_path, stdout=True, train_logger=False)
+    setup_loggers(
+        base_path=args.log_path, debug=args.debug, stdout=True, train_logger=False,
+    )
+    log.debug("Args: %s", vars(args))
 
     raw_chat_ids = args.chat_id if args.chat_id is not None else ["log"]
     chat_ids = [c.strip() for c in raw_chat_ids if c.strip()]
-    apps = [
-        ShellApp(
-            token=args.token,
-            chat_id=chat_id,
-            prefix=args.prefix,
-            timeout=args.timeout,
-        )
-        for chat_id in chat_ids
-    ]
 
-    if args.poller == "simple":
-        poller = Poller(apps[0].bot)
-    else:
-        poller = RandomIntervalPoller(apps[0].bot, max_buffer=5)
     try:
-        asyncio.run(_run(apps, poller, args.poll_interval))
+        asyncio.run(_amain(args, chat_ids))
     except KeyboardInterrupt:
         log.info("Interrupted, shutting down.")
 

@@ -1,6 +1,7 @@
 """Manual `getUpdates` poller, decoupled from any Application instance."""
 
 from __future__ import annotations
+import logging
 import random
 
 from telegram import Bot, Update
@@ -10,6 +11,8 @@ from telegram import Bot, Update
 import os
 import time
 import asyncio
+
+log = logging.getLogger("main")
 
 
 class Poller:
@@ -25,9 +28,14 @@ class Poller:
         self._offset: int = 0
 
     async def pull(self, timeout: int = 0) -> list[Update]:
+        log.debug("Poller.pull: get_updates(offset=%s, timeout=%s)", self._offset, timeout)
         updates = await self.bot.get_updates(offset=self._offset, timeout=timeout)
         if updates:
             self._offset = max(u.update_id for u in updates) + 1
+        log.debug(
+            "Poller.pull: got %d update(s) %s -> next offset=%s",
+            len(updates), [u.update_id for u in updates], self._offset,
+        )
         return list(updates)
 
 
@@ -46,21 +54,32 @@ class RandomIntervalPoller:
 
     async def pull(self, timeout: int = 0.1) -> list[Update]:
         await asyncio.sleep(random.uniform(0, self.random_sleep))
+        log.debug(
+            "RandomIntervalPoller.pull: get_updates(global_offset=%s, offset=%s, timeout=%s)",
+            self._global_offset, self._offset, timeout,
+        )
         updates = await self.bot.get_updates(offset=self._global_offset, timeout=timeout)
         updates = sorted(updates, key=lambda x: x.update_id)
+        log.debug("RandomIntervalPoller.pull: raw %d update(s) %s",
+                  len(updates), [u.update_id for u in updates])
 
         if len(updates) > 0:
             if len(updates) > self.max_buffer:
                 self._global_offset = updates[-self.max_buffer].update_id
-            
+
             if self._offset is None:
                 self._offset = updates[-1].update_id + 1
 
-            updates = [u for u in updates if u.update_id >= self._offset] 
-            
+            updates = [u for u in updates if u.update_id >= self._offset]
+
         if len(updates) > 0:
             self._offset = updates[-1].update_id + 1
 
+        log.debug(
+            "RandomIntervalPoller.pull: returning %d update(s) %s -> global_offset=%s offset=%s",
+            len(updates), [u.update_id for u in updates],
+            self._global_offset, self._offset,
+        )
         return list(updates)
 
     async def sleep(self) -> None:

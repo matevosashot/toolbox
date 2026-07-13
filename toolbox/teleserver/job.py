@@ -161,6 +161,13 @@ class JobExtension(ABC, Generic[R]):
     @abstractmethod
     async def _kill(self, rec: R) -> None: ...
 
+    async def _shutdown_kill(self, rec: R) -> None:
+        """Forcefully terminate a job during teleserver shutdown.
+
+        Defaults to the same behaviour as the Kill button; subclasses may
+        override to escalate (e.g. SIGKILL instead of SIGTERM)."""
+        await self._kill(rec)
+
     @abstractmethod
     async def _tail(self, rec: R) -> str: ...
 
@@ -261,6 +268,27 @@ class JobExtension(ABC, Generic[R]):
             )
         except Exception:
             log.exception("Failed to edit /%s message for %s", self.verb, rec.id)
+
+    async def shutdown(self) -> None:
+        """Forcefully terminate every tracked job and cancel its watcher.
+
+        Called when the teleserver is shutting down (Ctrl-C or ``systemctl
+        stop``/``restart``) so detached jobs — ``/process`` commands started in
+        their own session, and ``/tmux``/``/claude`` sessions — do not outlive
+        the server.
+        """
+        records = list(self._records.values())
+        if records:
+            log.info("Shutdown: force-killing %d /%s job(s)", len(records), self.verb)
+        for rec in records:
+            watcher = rec.watcher
+            if watcher is not None and not watcher.done():
+                watcher.cancel()
+            try:
+                await self._shutdown_kill(rec)
+            except Exception:
+                log.exception("Failed to kill /%s %s during shutdown", self.verb, rec.id)
+        self._records.clear()
 
     async def _on_callback(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
