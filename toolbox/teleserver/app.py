@@ -86,21 +86,28 @@ class ShellApp:
         await self.application.update_queue.put(update)
 
 
-async def _run(app: ShellApp, poller: Poller, poll_interval: float) -> None:
-    log.info("Listening on chat %s for prefix %r ...", app.chat_id, app.prefix)
-    await app.start()
+async def _run(apps: list[ShellApp], poller: Poller, poll_interval: float) -> None:
+    log.info(
+        "Listening on chats %s ...",
+        [f"{a.chat_id} (prefix {a.prefix!r})" for a in apps],
+    )
+    for app in apps:
+        await app.start()
     try:
         while True:
             try:
                 for update in await poller.pull():
-                    await app.feed(update)
+                    print(update)
+                    for app in apps:
+                        await app.feed(update)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("Unhandled error in polling loop")
             await asyncio.sleep(poll_interval)
     finally:
-        await app.stop()
+        for app in apps:
+            await app.stop()
 
 
 def main() -> None:
@@ -110,12 +117,15 @@ def main() -> None:
     parser.add_argument(
         "--chat_id",
         type=str,
-        default="log",
+        action="append",
+        default=None,
         help=(
-            f"Telegram chat/channel to listen on. "
+            f"Telegram chat/channel(s) to listen on. "
             f"Named shortcuts: {list(CHANNEL_IDS.keys())}. "
             f"Or pass a raw numeric ID. Append ':<thread_id>' to scope to a "
-            f"topic, e.g. 'log:42'. (default: log)"
+            f"topic, e.g. 'log:42'. Repeat the flag to run the identical app "
+            f"on multiple chats, e.g. '--chat_id log --chat_id dev:42'. "
+            f"(default: log)"
         ),
     )
     parser.add_argument(
@@ -137,6 +147,16 @@ def main() -> None:
         help="Seconds between polling cycles (default: 1).",
     )
     parser.add_argument(
+        "--poller",
+        type=str,
+        choices=["simple", "random"],
+        default="simple",
+        help=(
+            "Poller implementation: 'simple' (Poller) or 'random' "
+            "(RandomIntervalPoller, jittered polling). (default: simple)"
+        ),
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=30,
@@ -156,16 +176,24 @@ def main() -> None:
 
     setup_loggers(base_path=args.log_path, stdout=True, train_logger=False)
 
-    app = ShellApp(
-        token=args.token,
-        chat_id=args.chat_id,
-        prefix=args.prefix,
-        timeout=args.timeout,
-    )
-    # poller = Poller(app.bot)
-    poller = RandomIntervalPoller(app.bot, max_buffer=5) 
+    raw_chat_ids = args.chat_id if args.chat_id is not None else ["log"]
+    chat_ids = [c.strip() for c in raw_chat_ids if c.strip()]
+    apps = [
+        ShellApp(
+            token=args.token,
+            chat_id=chat_id,
+            prefix=args.prefix,
+            timeout=args.timeout,
+        )
+        for chat_id in chat_ids
+    ]
+
+    if args.poller == "simple":
+        poller = Poller(apps[0].bot)
+    else:
+        poller = RandomIntervalPoller(apps[0].bot, max_buffer=5)
     try:
-        asyncio.run(_run(app, poller, args.poll_interval))
+        asyncio.run(_run(apps, poller, args.poll_interval))
     except KeyboardInterrupt:
         log.info("Interrupted, shutting down.")
 
