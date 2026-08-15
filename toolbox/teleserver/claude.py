@@ -100,24 +100,39 @@ class ClaudeExtension(TmuxExtension):
     
     async def _on_claude_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
-        data = query.data.split(":")
-        print("data", data)
+        data = (query.data or "").split(":")
         if len(data) != 2 or data[0] != self._button_prefix:
-            raise ValueError(f"Invalid query data: {query.data}")
+            await query.answer("Invalid button.", show_alert=True)
             return
         session_id = data[1]
         
         command = self._parse_input(f"/claude {session_id}")
+        if not command:
+            # Malformed session id, or its cwd can't be resolved (folder gone /
+            # session expired). Nothing to resume — answer and bail instead of
+            # spawning a None command, which crashes in _spawn (exports + None).
+            await query.answer(
+                "Can't resume: session expired or its folder is gone.",
+                show_alert=True,
+            )
+            return
 
+        await query.answer()
         await self._start_job(command, self.chat_id, metadata={"message_text": query.message.text, "session_id": session_id})
 
     
     def _status_text(self, rec: JobRecord, status: str) -> str:
-        text = ""
+        # Everything here renders as MarkdownV2: escape the plain-text status
+        # (e.g. "auto-killed after timeout" — the '-' is reserved) and the
+        # code-span values (a hyphenated job id / UUID session id is fine inside
+        # backticks, but a stray backtick would still break parsing).
+        job_id = escape_markdown(rec.id, version=2, entity_type="code")
+        status_text = escape_markdown(status, version=2)
+        text = f"tmux `{job_id}` — {status_text}"
         session_id = rec.metadata.get("session_id")
-        text += f"tmux `{rec.id}` — {status}"
         if session_id:
-            text += f"\nSession: `{session_id}`"
+            sid = escape_markdown(str(session_id), version=2, entity_type="code")
+            text += f"\nSession: `{sid}`"
         if self._verbose:
             cmd = escape_markdown(rec.cmd, version=2, entity_type="code")
             text += f"\n`{cmd}`"
