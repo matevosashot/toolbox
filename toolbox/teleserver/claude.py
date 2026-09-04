@@ -71,7 +71,7 @@ class ClaudeExtension(TmuxExtension):
                 return
             rc, out, _ = await self._tmux("capture-pane", "-p", "-t", f"{rec.id}:")
             if rc == 0 and TRUST_PROMPT_MARKER in out.decode(errors="replace"):
-                await self._tmux("send-keys", "-t", f"{rec.id}:", "1", "Enter")
+                await self._tmux("send-keys", "-t", f"{rec.id}:", "Down", "Enter")
                 log.info("Auto-accepted trust prompt in %s", rec.id)
                 return
             await asyncio.sleep(TRUST_POLL_INTERVAL)
