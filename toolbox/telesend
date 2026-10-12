@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# cron (e.g. @reboot) runs with a minimal env: ensure PATH and token are available
+export PATH="$HOME/.local/bin:$PATH"
+if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+  # ~/.profile may be a symlink onto NFS that mounts late after boot: wait up to 15 min
+  for i in $(seq 1 90); do [ -r "$HOME/.profile" ] && break; sleep 10; done
+  . "$HOME/.profile" 2>/dev/null
+fi
+if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+  echo "telesend: TELEGRAM_BOT_TOKEN is not set" >&2
+  exit 1
+fi
+
 formatted_date=$(date +"%Y-%m-%d %H:%M:%S")
 
 hostname=$(hostname)
@@ -10,8 +22,12 @@ message=$(echo  "*$hostname* *$local_ip* 🔵%0A\`$formatted_date\` %0A$@")
 
 token=$TELEGRAM_BOT_TOKEN
 
-curl -X POST \
-  "https://api.telegram.org/bot$token/sendMessage" \
-  -d chat_id=-1001382816694 \
-  -d parse_mode="Markdown" \
-  -d text="$message"
+# retry so @reboot runs survive the network not being up yet
+for i in $(seq 1 12); do
+  curl -sS -f -X POST \
+    "https://api.telegram.org/bot$token/sendMessage" \
+    -d chat_id=-1001382816694 \
+    -d parse_mode="Markdown" \
+    -d text="$message" && break
+  sleep 10
+done
