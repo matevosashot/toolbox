@@ -79,25 +79,36 @@ def is_excluded(cwd, exclude_dirs):
     return False
 
 
-def session_title(transcript_path):
-    """User-set title (/rename) wins over the auto-generated one."""
-    custom = auto = ""
+def transcript_info(transcript_path):
+    """Return (title, remote_url) from the transcript.
+
+    Title: the /rename name if set, else Claude's auto-generated one, else "untitled".
+    URL: the claude.ai/code link when Remote Control has been on for the session
+    (transcript has a ``bridge-session`` entry), else "".
+    """
+    custom = auto = bridge = ""
     try:
         with open(transcript_path, encoding="utf-8") as fh:
             for line in fh:
-                if '-title"' not in line:
+                if '-title"' not in line and '"bridge-session"' not in line:
                     continue
                 try:
                     obj = json.loads(line)
                 except ValueError:
                     continue
-                if obj.get("type") == "custom-title" and obj.get("customTitle"):
+                kind = obj.get("type")
+                if kind == "custom-title" and obj.get("customTitle"):
                     custom = obj["customTitle"]
-                elif obj.get("type") == "ai-title" and obj.get("aiTitle"):
+                elif kind == "ai-title" and obj.get("aiTitle"):
                     auto = obj["aiTitle"]
+                elif kind == "bridge-session" and obj.get("bridgeSessionId"):
+                    bridge = obj["bridgeSessionId"]
     except OSError:
         pass
-    return custom or auto or "untitled"
+    url = ""
+    if bridge:
+        url = "https://claude.ai/code/session_%s" % bridge.split("_", 1)[-1]
+    return custom or auto or "untitled", url
 
 
 def fmt_duration(seconds):
@@ -114,19 +125,17 @@ def fmt_cost(cost, baseline):
     return "$%.2f($%.2f)" % (max(cost - baseline, 0.0), cost)
 
 
-def build_message(icon, state, title, cwd, session_id, elapsed=None, cost="", model=""):
+def build_message(icon, state, title, cwd, session_id, elapsed=None, cost="", model="", url=""):
     head = "%s *%s*" % (icon, _md_escape(title))
     if state:
         head += " \u2014 %s" % _md_escape(state)
     info = " \u00b7 ".join(
         p for p in (fmt_duration(elapsed) if elapsed is not None else "", cost,
-                    _md_escape(model), "`%s`" % cwd) if p)
-    return "\n".join([
-        head,
-        info,
-        "*Session:* `%s`" % session_id,
-        "*Host:* %s" % _md_escape(get_hostname()),
-    ])
+                    _md_escape(model), _md_escape(get_hostname())) if p)
+    lines = [head, info, "`%s`" % cwd, "`%s`" % session_id]
+    if url:
+        lines.append("[open](%s)" % url)
+    return "\n".join(lines)
 
 
 def statusline(data):
@@ -199,10 +208,10 @@ def _run(args):
 
     state = _read_state(session_id)
     cost = fmt_cost(state.get("cost"), start.get("cost"))
-    title = session_title(data.get("transcript_path", ""))
+    title, url = transcript_info(data.get("transcript_path", ""))
     icon, label = ("✅", "") if args.mode == "stop" else ("⏳", "input needed")
     text = build_message(icon, label, title, cwd, session_id, elapsed, cost,
-                         state.get("model", ""))
+                         state.get("model", ""), url)
     asyncio.run(_send(cfg["chat"], text))
 
 

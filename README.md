@@ -276,12 +276,13 @@ Message (Telegram Markdown):
 
 ```
 ✅ <session title>
-3m 53s · $0.42($3.18) · Sonnet 5.5 · /path/to/session/cwd
-Session: <session id>
-Host: <hostname>
+3m 53s · $0.42($3.18) · Sonnet 5.5 · <hostname>
+/path/to/session/cwd
+<session id>
+open            <- link to https://claude.ai/code/session_<id>, only if Remote Control is on
 ```
 
-The cost is `this turn($session total)` as reported by Claude Code through the statusline command; the cost and model are omitted if the `statusLine` hook isn't configured. `⏳ <title> — input needed` is used for `notify`. The title is the `/rename` name if set, otherwise Claude's auto-generated title, otherwise `untitled`. Errors never block Claude (the hook always exits 0).
+The cost is `this turn($session total)` as reported by Claude Code through the statusline command; the cost and model are omitted if the `statusLine` hook isn't configured. The `open` link is built from the `bridge-session` entry Claude Code writes to the transcript once Remote Control is enabled for the session; it is omitted otherwise (and can be stale if Remote Control was turned off again). `⏳ <title> — input needed` is used for `notify`. The title is the `/rename` name if set, otherwise Claude's auto-generated title, otherwise `untitled`. Errors never block Claude (the hook always exits 0).
 
 **Options** (precedence: CLI flags > config file > defaults):
 
