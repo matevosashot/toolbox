@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "toolbox claude_notify_hook notify" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "toolbox claude_notify_hook start" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "toolbox claude_notify_hook stop --threshold 60 --exclude ~/scratch" }
+        ]
+      }
+    ]
+  }
+}

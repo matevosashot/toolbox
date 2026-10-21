@@ -4,6 +4,7 @@ from toolbox.teleserver import main as _teleserver_main
 from toolbox.tasker.worker import main as _worker_main
 from toolbox.telesend_data import main as _telesend_data_main
 from toolbox.scripts import get_claude_cwd as _get_claude_cwd
+from toolbox.claude_notify_hook import main as _claude_notify_hook_main
 
 
 # Simple function commands: called with positional args and --key=value kwargs.
@@ -19,6 +20,7 @@ SUBCOMMANDS = {
     "teleserver": _teleserver_main,
     "worker": _worker_main,
     "telesend-data": _telesend_data_main,
+    "claude_notify_hook": _claude_notify_hook_main,
 }
 
 

@@ -15,6 +15,7 @@ A lightweight Python utility package for machine and git introspection.
   - `[telesend-data](#telesend-data)`
   - `[pingservers](#pingservers)`
   - `[teleserver](#teleserver)`
+  - `[toolbox claude_notify_hook](#toolbox-claude_notify_hook)` — Claude Code Telegram notifications
   - `[toolbox worker](#toolbox-worker)` — file-system task queue ([full docs](docs/tasker.md))
 - [Path utilities](#path-utilities)
   - `[get_versions()](#get_versionspath)`
@@ -257,6 +258,58 @@ You:  $ rm old_checkpoint.pt   ← confirmed, executes
 ```
 
 Sending any other command before confirming cancels the pending operation silently.
+
+---
+
+### `toolbox claude_notify_hook`
+
+Claude Code hook that sends a Telegram message (via the `claude` chat by default) when a turn finishes after a long run, or when Claude needs your input. Hook JSON is read from stdin.
+
+| Mode     | Claude hook        | Behaviour |
+|----------|--------------------|-----------|
+| `start`  | `UserPromptSubmit` | Records the time of your last message (`/tmp/claude_start_<session_id>`). |
+| `stop`   | `Stop`             | Notifies if the turn took longer than the threshold (default 60 s). |
+| `notify` | `Notification`     | Always notifies: Claude is waiting for you. |
+
+Message (Telegram Markdown):
+
+```
+✅ <session title>
+finished
+Duration: 1m 42s
+Dir: /path/to/session/cwd
+Session: <session id>
+Host: <hostname>
+```
+
+`⏳ <title>` / `input needed` is used for `notify` (no duration). The title is the `/rename` name if set, otherwise Claude's auto-generated title, otherwise `untitled`. Errors never block Claude (the hook always exits 0).
+
+**Options** (precedence: CLI flags > config file > defaults):
+
+| Flag | Config key | Default | Meaning |
+|------|-----------|---------|---------|
+| `--threshold SECONDS` | `threshold` | `60` | Minimum turn duration for `stop`. |
+| `--exclude DIR` (repeatable) | `exclude_dirs` | none | Skip sessions whose cwd is `DIR` or inside it. Flag values are added to the file's list. |
+| `--chat NAME` | `chat` | `claude` | Chat shortcut or id (see `telesend-data --chat_id`). |
+| `--config PATH` | – | `~/.claude/claude_notify_hook.json` | Config file location. |
+
+```json
+{"threshold": 60, "exclude_dirs": ["~/scratch", "/data/tmp"], "chat": "claude"}
+```
+
+**Claude settings** — add the hooks block from [docs/claude_settings_template.json](docs/claude_settings_template.json) to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Notification":     [{"matcher": "", "hooks": [{"type": "command", "command": "toolbox claude_notify_hook notify"}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "toolbox claude_notify_hook start"}]}],
+    "Stop":             [{"hooks": [{"type": "command", "command": "toolbox claude_notify_hook stop --threshold 60 --exclude ~/scratch"}]}]
+  }
+}
+```
+
+Requires `TELEGRAM_BOT_TOKEN` (see `toolbox.configs.telegram`). Running sessions need `/hooks` or a restart to pick up changes.
 
 ---
 
