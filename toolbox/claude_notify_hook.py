@@ -19,7 +19,7 @@ import os
 import sys
 import time
 
-from telegram import Bot
+from telegram import Bot, LinkPreviewOptions
 
 from toolbox.configs.telegram import TELEGRAM_BOT_TOKEN
 from toolbox.machine import get_hostname
@@ -153,7 +153,8 @@ def statusline(data):
 
 async def _send(chat, text):
     chat_id, thread_id = _resolve_chat_id(chat)
-    kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown",
+              "link_preview_options": LinkPreviewOptions(is_disabled=True)}
     if thread_id is not None:
         kwargs["message_thread_id"] = int(thread_id)
     async with Bot(TELEGRAM_BOT_TOKEN) as bot:
