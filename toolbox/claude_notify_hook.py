@@ -5,6 +5,10 @@ Usage (hook JSON is read from stdin)::
     toolbox claude_notify_hook start    # UserPromptSubmit: remember prompt time
     toolbox claude_notify_hook stop     # Stop: notify if the turn took > threshold
     toolbox claude_notify_hook notify   # Notification: Claude needs your input
+    toolbox claude_notify_hook statusline  # statusLine: records cost/model for the hook
+
+The statusline command receives ``cost.total_cost_usd`` and the model from Claude
+Code (hooks don't), stores them in /tmp and prints a short status line.
 
 Config precedence: CLI flags > JSON config file > defaults.
 """
@@ -27,6 +31,19 @@ DEFAULTS = {"threshold": 60, "exclude_dirs": [], "chat": "claude"}
 
 def _start_file(session_id):
     return "/tmp/claude_start_%s" % session_id
+
+
+def _state_file(session_id):
+    return "/tmp/claude_state_%s.json" % session_id
+
+
+def _read_state(session_id):
+    """Latest {cost, model} written by the statusline command ({} if unavailable)."""
+    try:
+        with open(_state_file(session_id), encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
 
 
 def load_config(args):
@@ -89,16 +106,40 @@ def fmt_duration(seconds):
     return " ".join(p for p in ("%dh" % h if h else "", "%dm" % m if m else "", "%ds" % s) if p)
 
 
-def build_message(icon, state, title, cwd, session_id, elapsed=None):
-    lines = ["%s *%s*" % (icon, _md_escape(title)), _md_escape(state)]
-    if elapsed is not None:
-        lines.append("*Duration:* `%s`" % fmt_duration(elapsed))
-    lines += [
-        "*Dir:* `%s`" % cwd,
+def fmt_cost(cost, baseline):
+    if cost is None:
+        return ""
+    if baseline is None:
+        return "$%.2f" % cost
+    return "$%.2f($%.2f)" % (max(cost - baseline, 0.0), cost)
+
+
+def build_message(icon, state, title, cwd, session_id, elapsed=None, cost="", model=""):
+    head = "%s *%s*" % (icon, _md_escape(title))
+    if state:
+        head += " \u2014 %s" % _md_escape(state)
+    info = " \u00b7 ".join(
+        p for p in (fmt_duration(elapsed) if elapsed is not None else "", cost,
+                    _md_escape(model), "`%s`" % cwd) if p)
+    return "\n".join([
+        head,
+        info,
         "*Session:* `%s`" % session_id,
         "*Host:* %s" % _md_escape(get_hostname()),
-    ]
-    return "\n".join(lines)
+    ])
+
+
+def statusline(data):
+    """statusLine command: persist cost/model for the hooks, print a status line."""
+    sid = data.get("session_id", "unknown")
+    cost = (data.get("cost") or {}).get("total_cost_usd")
+    model = (data.get("model") or {}).get("display_name") or ""
+    try:
+        with open(_state_file(sid), "w", encoding="utf-8") as fh:
+            json.dump({"cost": cost, "model": model}, fh)
+    except OSError:
+        pass
+    print("%s \u00b7 %s" % (model, "$%.2f" % cost if cost is not None else "$-"))
 
 
 async def _send(chat, text):
@@ -113,7 +154,7 @@ async def _send(chat, text):
 def _parse_args(argv):
     p = argparse.ArgumentParser(prog="toolbox claude_notify_hook", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("mode", choices=["start", "stop", "notify"])
+    p.add_argument("mode", choices=["start", "stop", "notify", "statusline"])
     p.add_argument("--threshold", type=float, default=None, metavar="SECONDS",
                    help="min turn duration for 'stop' notifications (default 60)")
     p.add_argument("--exclude", action="append", metavar="DIR",
@@ -128,33 +169,40 @@ def _parse_args(argv):
 
 def _run(args):
     data = json.load(sys.stdin)
+    if args.mode == "statusline":
+        return statusline(data)
+
     session_id = data.get("session_id", "unknown")
     path = _start_file(session_id)
 
     if args.mode == "start":
         with open(path, "w") as fh:
-            fh.write(str(time.time()))
+            json.dump({"t": time.time(), "cost": _read_state(session_id).get("cost")}, fh)
         return
 
     cfg = load_config(args)
     cwd = data.get("cwd") or os.getcwd()
     if is_excluded(cwd, cfg["exclude_dirs"]):
         return
-    title = session_title(data.get("transcript_path", ""))
+    if args.mode == "stop" and data.get("stop_hook_active"):
+        return
+    try:
+        with open(path) as fh:
+            start = json.load(fh)
+        elapsed = time.time() - float(start["t"])
+    except (OSError, ValueError, KeyError, TypeError):
+        if args.mode == "stop":
+            return
+        start, elapsed = {}, None
+    if args.mode == "stop" and elapsed <= cfg["threshold"]:
+        return
 
-    if args.mode == "notify":
-        text = build_message("⏳", "input needed", title, cwd, session_id)
-    else:
-        if data.get("stop_hook_active"):
-            return
-        try:
-            with open(path) as fh:
-                elapsed = time.time() - float(fh.read())
-        except (OSError, ValueError):
-            return
-        if elapsed <= cfg["threshold"]:
-            return
-        text = build_message("✅", "finished", title, cwd, session_id, elapsed)
+    state = _read_state(session_id)
+    cost = fmt_cost(state.get("cost"), start.get("cost"))
+    title = session_title(data.get("transcript_path", ""))
+    icon, label = ("✅", "") if args.mode == "stop" else ("⏳", "input needed")
+    text = build_message(icon, label, title, cwd, session_id, elapsed, cost,
+                         state.get("model", ""))
     asyncio.run(_send(cfg["chat"], text))
 
 

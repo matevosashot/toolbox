@@ -270,19 +270,18 @@ Claude Code hook that sends a Telegram message (via the `claude` chat by default
 | `start`  | `UserPromptSubmit` | Records the time of your last message (`/tmp/claude_start_<session_id>`). |
 | `stop`   | `Stop`             | Notifies if the turn took longer than the threshold (default 60 s). |
 | `notify` | `Notification`     | Always notifies: Claude is waiting for you. |
+| `statusline` | `statusLine`   | Saves Claude's cost and model to `/tmp/claude_state_<session_id>.json` (hooks don't receive them) and prints `<model> · $<cost>`. |
 
 Message (Telegram Markdown):
 
 ```
 ✅ <session title>
-finished
-Duration: 1m 42s
-Dir: /path/to/session/cwd
+3m 53s · $0.42($3.18) · Sonnet 5.5 · /path/to/session/cwd
 Session: <session id>
 Host: <hostname>
 ```
 
-`⏳ <title>` / `input needed` is used for `notify` (no duration). The title is the `/rename` name if set, otherwise Claude's auto-generated title, otherwise `untitled`. Errors never block Claude (the hook always exits 0).
+The cost is `this turn($session total)` as reported by Claude Code through the statusline command; the cost and model are omitted if the `statusLine` hook isn't configured. `⏳ <title> — input needed` is used for `notify`. The title is the `/rename` name if set, otherwise Claude's auto-generated title, otherwise `untitled`. Errors never block Claude (the hook always exits 0).
 
 **Options** (precedence: CLI flags > config file > defaults):
 
@@ -305,7 +304,8 @@ Host: <hostname>
     "Notification":     [{"matcher": "", "hooks": [{"type": "command", "command": "toolbox claude_notify_hook notify"}]}],
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "toolbox claude_notify_hook start"}]}],
     "Stop":             [{"hooks": [{"type": "command", "command": "toolbox claude_notify_hook stop --threshold 60 --exclude ~/scratch"}]}]
-  }
+  },
+  "statusLine": {"type": "command", "command": "toolbox claude_notify_hook statusline"}
 }
 ```
 

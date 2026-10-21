@@ -4,23 +4,36 @@
       {
         "matcher": "",
         "hooks": [
-          { "type": "command", "command": "toolbox claude_notify_hook notify" }
+          {
+            "type": "command",
+            "command": "toolbox claude_notify_hook notify"
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "toolbox claude_notify_hook start" }
+          {
+            "type": "command",
+            "command": "toolbox claude_notify_hook start"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "toolbox claude_notify_hook stop --threshold 60 --exclude ~/scratch" }
+          {
+            "type": "command",
+            "command": "toolbox claude_notify_hook stop --threshold 60 --exclude ~/scratch"
+          }
         ]
       }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "toolbox claude_notify_hook statusline"
   }
 }
