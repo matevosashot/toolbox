@@ -270,13 +270,13 @@ Claude Code hook that sends a Telegram message (via the `claude` chat by default
 | `start`  | `UserPromptSubmit` | Records the time of your last message (`/tmp/claude_start_<session_id>`). |
 | `stop`   | `Stop`             | Notifies if the turn took longer than the threshold (default 60 s). |
 | `notify` | `Notification`     | Always notifies: Claude is waiting for you. |
-| `statusline` | `statusLine`   | Saves Claude's cost and model to `/tmp/claude_state_<session_id>.json` (hooks don't receive them) and prints `<model> · $<cost>`. |
+| `statusline` | `statusLine`   | Saves Claude's cost and model to `/tmp/claude_state_<session_id>.json` (hooks don't receive them) and prints `<model> • $<cost>`. |
 
 Message (Telegram Markdown):
 
 ```
 ✅ <session title>
-3m 53s · $0.42($3.18) · Sonnet 5.5 · <hostname>
+3m 53s • $0.42($3.18) • Sonnet 5.5 • <hostname>
 /path/to/session/cwd
 <session id>
 open            <- link to https://claude.ai/code/session_<id>, only if Remote Control is on

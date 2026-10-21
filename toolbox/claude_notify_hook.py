@@ -129,7 +129,7 @@ def build_message(icon, state, title, cwd, session_id, elapsed=None, cost="", mo
     head = "%s *%s*" % (icon, _md_escape(title))
     if state:
         head += " \u2014 %s" % _md_escape(state)
-    info = " \u00b7 ".join(
+    info = " \u2022 ".join(
         p for p in (fmt_duration(elapsed) if elapsed is not None else "", cost,
                     _md_escape(model), _md_escape(get_hostname())) if p)
     lines = [head, info, "`%s`" % cwd, "`%s`" % session_id]
@@ -148,7 +148,7 @@ def statusline(data):
             json.dump({"cost": cost, "model": model}, fh)
     except OSError:
         pass
-    print("%s \u00b7 %s" % (model, "$%.2f" % cost if cost is not None else "$-"))
+    print("%s \u2022 %s" % (model, "$%.2f" % cost if cost is not None else "$-"))
 
 
 async def _send(chat, text):
